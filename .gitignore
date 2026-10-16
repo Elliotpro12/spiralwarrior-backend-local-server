@@ -1,0 +1,56 @@
+# This workspace contains the full private research tree. Publish only the
+# backend slice explicitly allowed below; all other top-level material stays
+# out of Git unless reviewed and deliberately added later.
+/*
+!/README.md
+!/.gitignore
+!/project/
+/project/*
+!/project/backend_local/
+/project/backend_local/*
+!/project/backend_local/AGENTS.md
+!/project/backend_local/CONTRIBUTING_AI.md
+!/project/backend_local/README_GITHUB.md
+!/project/backend_local/server.py
+!/project/backend_local/ws_probe_server.py
+!/project/backend_local/account_store.py
+!/project/backend_local/mail_fixture.py
+!/project/backend_local/run_local_server.py
+!/project/backend_local/generate_lan_launcher.py
+!/project/backend_local/data/
+/project/backend_local/data/*
+!/project/backend_local/data/README.md
+!/project/backend_local/experiments/
+/project/backend_local/experiments/*
+!/project/backend_local/experiments/area-list-localhost.base64
+!/project/backend_local/notices/
+/project/backend_local/notices/*
+!/project/backend_local/notices/NoticeEng.txt
+
+# Never publish client packages, recovered assets, credentials, or local state.
+*.apk
+*.apks
+*.aab
+*.xapk
+*.idsig
+*.bat
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.py[cod]
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.jsonl
+.env
+.env.*
+!.env.example
+**/__pycache__/
+**/logs/
+
+# Local editor/OS files.
+.DS_Store
+Thumbs.db
