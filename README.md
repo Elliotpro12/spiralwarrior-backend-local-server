@@ -1,68 +1,29 @@
-# Backend comunitario de Spiral Warrior
+# Spiral Warrior Community Backend
 
-Este repositorio contiene el código del backend local que usamos para probar
-una restauración comunitaria de Spiral Warrior. **No es el backend original**
-y no se comunica con él.
+This repository contains the local backend code used to test a community restoration of Spiral Warrior. **It is not the original backend** and does not communicate with it.
 
-## Alcance real
+## Current scope
 
-La estimación del equipo es que se ha reconstruido **como mucho un 25% del
-backend original**. Es un límite prudente, no un porcentaje medido contra una
-lista completa de servicios: el servidor original no está disponible y buena
-parte de sus rutas y reglas siguen siendo desconocidas.
+Our estimate is that **at most 25% of the original backend has been reconstructed**. This is a cautious estimate, not a measured percentage against a complete service list: the original server is unavailable, and many of its routes and rules remain unknown.
 
-Lo que existe es un backend de compatibilidad basado en solicitudes observadas,
-pruebas del cliente y datos sintéticos o extraídos localmente. Entre los flujos
-con implementación parcial o pruebas están las cuentas locales, perfiles
-separados, Adventure, algunas recompensas e inventario, piezas y alineaciones,
-algunas operaciones GP, campaña PvE, compras locales gratuitas y el protocolo
-de gacha. El correo y el ranking son servicios sintéticos de prueba. Consulta
-[`project/backend_local/README_GITHUB.md`](project/backend_local/README_GITHUB.md)
-para los detalles y las limitaciones.
+The current implementation is a compatibility backend based on observed requests, client testing, and synthetic or locally extracted data. Flows with partial implementations or tests include local accounts, separate profiles, Adventure, some rewards and inventory, parts and lineups, some GP operations, the PvE campaign, free local purchases, and the gacha protocol. Email and ranking are synthetic test services. See [`project/backend_local/README_GITHUB.md`](project/backend_local/README_GITHUB.md) for details and limitations.
 
-Siguen pendientes, entre otros, la progresión completa de nivel y GP, varias
-recompensas, anuncios recompensados sin anuncios, partes de PvE, el flujo de
-gacha desde la interfaz y los servicios sociales. Las tasas y reglas que no se
-han observado se marcan como desconocidas; no se presentan como comportamiento
-del servidor original.
+Still incomplete are, among other things, full level and GP progression, several rewards, ad rewards without ads, parts of PvE, the gacha flow through the game interface, and social services. Rates and rules that have not been observed are marked as unknown; they are not presented as behavior of the original server.
 
-## Ejecutar en Windows
+## Run on Windows
 
-Se necesita Python 3.10 o posterior. El servidor usa la biblioteca estándar de
-Python, más los catálogos de datos locales que no se incluyen en este repositorio
-porque proceden del cliente del juego y requieren una revisión de derechos.
-Consulta [`project/backend_local/data/README.md`](project/backend_local/data/README.md)
-antes de preparar esos archivos.
+Python 3.10 or later is required. The server uses Python's standard library, along with local data catalogs that are not included in this repository because they come from the game client and require a rights review. Read [`project/backend_local/data/README.md`](project/backend_local/data/README.md) before preparing those files.
 
-Para ejecutar en esta PC, usa `python project/backend_local/run_local_server.py`.
-Las instrucciones para probar desde un teléfono en la misma red Wi-Fi, generar
-un lanzador `.bat` local o configurar el firewall están en
-[`project/backend_local/README_GITHUB.md`](project/backend_local/README_GITHUB.md).
+To run the server on this PC, use `python project/backend_local/run_local_server.py`. Instructions for testing from a phone on the same Wi-Fi network, generating a local `.bat` launcher, and configuring the firewall are in [`project/backend_local/README_GITHUB.md`](project/backend_local/README_GITHUB.md).
 
-El modo LAN no incluye HTTPS ni está preparado para exponerlo a Internet. No
-uses cuentas reales ni publiques la dirección IP de tu red.
+The LAN mode does not include HTTPS and is not designed to be exposed to the internet. Do not use real accounts or publish your network's IP address.
 
-## Para contribuir con un agente de programación
+## Contributing with a coding agent
 
-Lee [`project/backend_local/CONTRIBUTING_AI.md`](project/backend_local/CONTRIBUTING_AI.md)
-antes de cambiar el servidor. Ahí están el flujo de trabajo, la lista de
-herramientas, la instalación de REA y las instrucciones iniciales para el
-agente. REA es la skill de análisis enlazada por el proyecto original:
-<https://github.com/morluto/rea>.
+Read [`project/backend_local/CONTRIBUTING_AI.md`](project/backend_local/CONTRIBUTING_AI.md) before changing the server. It covers the workflow, tools, REA installation, and starter instructions for agents. REA is the reverse-engineering skill linked by the original project: <https://github.com/morluto/rea>.
 
-## APK, recursos y licencia
+## APK, resources, and license
 
-Este repositorio no incluye el APK modificado, el APK original ni los recursos
-recuperados. No los subas sin confirmar que tienes autorización para
-redistribuirlos, y tampoco publica enlaces de descarga a los APKs. El código de
-backend y los catálogos derivados del cliente tienen licencias y procedencias
-distintas; **no se asigna una licencia al repositorio hasta revisar qué partes
-podemos licenciar**. Un repositorio privado tampoco concede derechos que no
-tengas.
+This repository does not include the modified APK, the original APK, or recovered game resources. Do not upload them unless you have confirmed that you are authorized to redistribute them. This repository also does not publish APK download links. The backend code and catalogs derived from the client have different licensing and provenance; **no license is assigned to the repository until we review which parts we can license**. Making a repository private would not grant rights you do not have.
 
-El `.gitignore` deja visible solo una selección del backend y excluye APKs,
-respaldos, recursos extraídos, investigaciones locales, datos de cuentas,
-logs, claves de firma y catálogos JSON derivados del juego. Revisa `git status`
-antes de cada publicación y no fuerces archivos ignorados sin una revisión de
-procedencia y permisos.
-
+The `.gitignore` keeps only an allowlisted selection of the backend visible and excludes APKs, backups, extracted resources, local research, account data, logs, signing keys, and JSON catalogs derived from the game. Review `git status` before each publication, and do not force-add ignored files without reviewing their provenance and permissions.
