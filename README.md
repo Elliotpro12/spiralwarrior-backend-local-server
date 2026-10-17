@@ -22,6 +22,10 @@ The LAN mode does not include HTTPS and is not designed to be exposed to the int
 
 Read [`project/backend_local/CONTRIBUTING_AI.md`](project/backend_local/CONTRIBUTING_AI.md) before changing the server. It covers the workflow, tools, REA installation, and starter instructions for agents. REA is the reverse-engineering skill linked by the original project: <https://github.com/morluto/rea>.
 
+## Client preservation notes
+
+The repository also documents the public LeBian asset mirrors and a rate-limited recovery workflow, plus the tested Android 14 startup workaround and its limits: [`ASSET_MIRRORS_AND_RECOVERY.md`](project/backend_local/ASSET_MIRRORS_AND_RECOVERY.md) and [`ANDROID_12_PLUS_COMPATIBILITY.md`](project/backend_local/ANDROID_12_PLUS_COMPATIBILITY.md). These notes do not include APKs, resource files, or generated indexes.
+
 ## APK, resources, and license
 
 This repository does not include the modified APK, the original APK, or recovered game resources. Do not upload them unless you have confirmed that you are authorized to redistribute them. This repository also does not publish APK download links. The backend code and catalogs derived from the client have different licensing and provenance; **no license is assigned to the repository until we review which parts we can license**. Making a repository private would not grant rights you do not have.

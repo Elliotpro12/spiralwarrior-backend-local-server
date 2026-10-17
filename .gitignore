@@ -17,6 +17,12 @@
 !/project/backend_local/mail_fixture.py
 !/project/backend_local/run_local_server.py
 !/project/backend_local/generate_lan_launcher.py
+!/project/backend_local/ASSET_MIRRORS_AND_RECOVERY.md
+!/project/backend_local/ANDROID_12_PLUS_COMPATIBILITY.md
+!/project/backend_local/tools/
+/project/backend_local/tools/*
+!/project/backend_local/tools/analyze_lebian_stream.py
+!/project/backend_local/tools/download_streamed_resources.py
 !/project/backend_local/data/
 /project/backend_local/data/*
 !/project/backend_local/data/README.md

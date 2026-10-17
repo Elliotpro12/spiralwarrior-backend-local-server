@@ -9,6 +9,8 @@ Before starting, read:
 1. The root `README.md`.
 2. `project/backend_local/README_GITHUB.md`.
 3. The reports relevant to the feature and client flow you will work on.
+4. For asset recovery, `project/backend_local/ASSET_MIRRORS_AND_RECOVERY.md`.
+5. For Android startup compatibility, `project/backend_local/ANDROID_12_PLUS_COMPATIBILITY.md`.
 
 Label findings as:
 
@@ -40,6 +42,12 @@ Do not invent routes, protocol fields, rewards, limits, rates, errors, or origin
 - Androguard 4.1.4 for programmatic DEX inspection.
 - JADX may help with Java/DEX inspection, but it was not found on `PATH` in the last environment review. Confirm it is installed before relying on it.
 - Frida for runtime observations. Hooks are temporary diagnostic tools. When a fix depends on a hook, move that behavior into the APK and/or backend, then verify it with Frida detached.
+
+### Client preservation utilities
+
+- `tools/analyze_lebian_stream.py` reads a user-supplied XAPK and produces a local resource index and the package-specific `tryflag` prefix.
+- `tools/download_streamed_resources.py` retrieves only entries in that local index from the documented public mirrors, with low request concurrency, retries, resumption, and size/CRC32 checks. See `ASSET_MIRRORS_AND_RECOVERY.md` before using it.
+- The Android 14 / API 34 LeBian workaround is documented in `ANDROID_12_PLUS_COMPATIBILITY.md`. It is evidence for the tested x86_64 emulator setup, not a general claim that all Android 12+ devices fail the same way.
 
 These versions describe the research workstation; they are not dependencies installed by this repository. Do not upload installers, emulators, APKs, `frida-server`, Ghidra/IDA databases, or signing keys.
 
