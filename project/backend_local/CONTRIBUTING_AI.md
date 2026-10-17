@@ -25,7 +25,7 @@ Do not invent routes, protocol fields, rewards, limits, rates, errors, or origin
 ### Backend development
 
 - Windows 10/11, PowerShell, and Git.
-- Python 3.10 or later. The server uses the standard library. Local game data catalogs are provided separately and are not part of this repository.
+- Python 3.10 or later. The server uses the standard library. Local game-data catalogs are not included. The server starts without the optional purchase catalog, but purchase claims will not grant items until a local catalog is provided; other catalog-backed features may also be incomplete.
 - Node.js/npm only for JavaScript client tasks or REA installation; Node is not required to run the Python backend.
 
 ### Android client testing
