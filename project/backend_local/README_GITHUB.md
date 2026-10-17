@@ -1,88 +1,63 @@
-# Backend local de Spiral Warrior
+# Spiral Warrior Local Backend
 
-Este código es una implementación comunitaria de compatibilidad para pruebas
-locales. **No es el backend original.** La estimación del equipo es que se ha
-reconstruido como mucho el **25% del backend original**; no tenemos un inventario
-completo que permita calcular una fracción exacta.
+This is a community compatibility backend for local testing. **It is not the original backend.** The current estimate is that at most **25% of the original backend** has been reconstructed. A complete inventory of the original service is unavailable, so this is not a measured percentage.
 
-## Qué incluye
+## What is included
 
-- Acceso local por usuario o correo, sesiones de prueba y perfiles separados.
-- Servidor HTTP para el flujo de acceso, avisos locales, compras de prueba,
-  correo y respuestas de ranking sintéticas.
-- Servidor WebSocket con sincronización de perfil y handlers parciales para
-  Adventure, recompensas, inventario/piezas, algunas operaciones GP, campaña
-  PvE y Lottery.
-- Persistencia local mediante SQLite para cuentas y JSON por perfil.
+- Local username/email accounts, test sessions, and separate player profiles.
+- HTTP routes for login, local notices, test purchases, mail, and synthetic ranking responses.
+- A WebSocket server with profile synchronization and partial handlers for Adventure, rewards, inventory/parts, some GP operations, the PvE campaign, and Lottery.
+- Local persistence using SQLite for accounts and JSON files for profiles.
 
-Los informes de investigación locales documentan la evidencia de cada flujo.
-Un handler o una respuesta sintética no demuestra que el servidor original
-tuviera el mismo comportamiento.
+Research reports document the evidence for each flow. A handler or synthetic response does not prove that the original server behaved the same way.
 
-## Qué falta
+## Known gaps
 
-La progresión de nivel y GP está incompleta; algunas rutas de PvE y recompensas
-no están implementadas; las recompensas de anuncios siguen en progreso; el
-flujo de Lottery necesita una prueba completa desde la interfaz; y Friend/Chat
-quedan fuera del contrato confirmado. El ranking y el correo son fixtures de
-prueba. No hay tasas, topes ni elegibilidad confirmados para varios sistemas.
+Level and GP progression are incomplete. Some PvE routes and rewards are missing; ad rewards are still in progress; Lottery needs a complete test through the game interface; and Friend/Chat are outside the confirmed protocol. Ranking and mail are test fixtures. Rates, caps, and eligibility rules remain unknown for several systems.
 
-## Ejecutar
+## Run the backend
 
-Requisitos: Windows 10/11 y Python 3.10 o posterior. El backend Python usa la
-biblioteca estándar. Para probar el cliente también hacen falta un emulador,
-ADB y, para observación dinámica, Frida; consulta
-[`CONTRIBUTING_AI.md`](CONTRIBUTING_AI.md).
+Requirements: Windows 10/11 and Python 3.10 or later. The Python backend uses the standard library. Client testing additionally needs an emulator, ADB, and Frida for dynamic observations; see [`CONTRIBUTING_AI.md`](CONTRIBUTING_AI.md).
 
-Para repetir las pruebas dinámicas documentadas, el dispositivo debe ser un
-emulador con acceso root y ADB local activado, o un teléfono con root. También
-necesitas `adb` instalado y conectado desde la PC. El backend se puede ejecutar
-y estudiar por separado sin ese dispositivo.
+To repeat the documented dynamic tests, use an emulator with root access and local ADB enabled, or a rooted phone. ADB must be installed on the PC and connected to the device. The backend can be run and studied without that device.
 
-Para ejecutar en esta PC, desde la raíz del repositorio:
+From the repository root, run the backend on this PC:
 
 ```powershell
 python project/backend_local/run_local_server.py
 ```
 
-Para iniciar directamente en la red local, usa:
+To listen on the local network, run:
 
 ```powershell
 python project/backend_local/run_local_server.py --lan
 ```
 
-El modo LAN enlaza los listeners a la interfaz de red, detecta la IPv4 privada
-de esta PC y anuncia HTTP en el puerto `18765` y WebSocket en `18766`. El
-teléfono y la PC deben estar en la misma red local, y el cliente debe apuntar a
-la IP que imprime el servidor. Si la detección automática escoge otra interfaz,
-puedes indicar la IPv4 asignada a la PC:
+LAN mode binds the services to the network interfaces, detects this PC's private IPv4 address, and advertises HTTP on port `18765` and WebSocket on port `18766`. The phone and PC must be on the same local network, and the client must point to the IP printed by the server. If automatic detection selects another interface, provide the IPv4 address assigned to this PC:
 
 ```powershell
 python project/backend_local/run_local_server.py --lan --lan-ip 192.168.1.25
 ```
 
-### Generar un lanzador `.bat` local
+### Generate a local `.bat` launcher
 
-El repositorio incluye el generador, pero excluye todos los `.bat`. Para crear
-el lanzador LAN junto al generador, desde la raíz ejecuta:
+The repository includes the generator but excludes all `.bat` files. From the repository root, generate a LAN launcher with:
 
 ```powershell
 python project/backend_local/generate_lan_launcher.py
 ```
 
-Después puedes iniciarlo así:
+Then start it with:
 
 ```powershell
 .\project\backend_local\start_local_server_lan.bat
 ```
 
-El `.bat` generado queda ignorado por Git; comparte el script generador y estos
-comandos, no el archivo generado.
+Git ignores the generated `.bat`; share the generator script and these commands, not the generated file.
 
-### Firewall de Windows para la subred local
+### Windows Firewall for the local subnet
 
-Si Windows bloquea conexiones entrantes, abre PowerShell como administrador y
-crea una regla limitada a los dispositivos de la subred local:
+If Windows blocks incoming connections, open PowerShell as Administrator and add a rule limited to local-subnet devices:
 
 ```powershell
 Get-NetFirewallRule -DisplayName 'Spiral Warrior LAN beta backend' -ErrorAction SilentlyContinue |
@@ -92,43 +67,32 @@ New-NetFirewallRule -DisplayName 'Spiral Warrior LAN beta backend' `
   -LocalPort 18765,18766 -RemoteAddress LocalSubnet -Profile Any
 ```
 
-Para quitarla luego:
+Remove the rule later with:
 
 ```powershell
 Get-NetFirewallRule -DisplayName 'Spiral Warrior LAN beta backend' -ErrorAction SilentlyContinue |
   Remove-NetFirewallRule
 ```
 
-El modo LAN no ofrece HTTPS y no se debe exponer a Internet. Las contraseñas y
-sesiones de esta build son para pruebas; no uses cuentas reales.
+LAN mode does not use HTTPS and must not be exposed to the internet. Passwords and sessions in this build are for testing; do not use real accounts.
 
-## Catálogos y archivos locales
+## Catalogs and local files
 
-Los catálogos del cliente en `data/*.json`, las bases, perfiles, logs y
-respuestas experimentales no se distribuyen. Consulta
-[`data/README.md`](data/README.md). El fixture
-`experiments/area-list-localhost.base64` sí se incluye porque es una respuesta
-sintética creada para la prueba local, no una captura del servidor original.
+Client catalogs in `data/*.json`, databases, profiles, logs, and experimental responses are not distributed. See [`data/README.md`](data/README.md). The `experiments/area-list-localhost.base64` fixture is included because it is a synthetic response created for local testing, not a capture from the original server.
 
-Sin los catálogos locales algunas funciones quedan vacías o incompletas. No se
-ha verificado cada sistema con los archivos de datos ausentes.
+The server starts without `data/local_free_purchase_catalog.json`; it prints a warning and uses an empty purchase catalog. Purchase claims then return `unknown_local_product` and grant no items. Supply a local catalog from a client copy you are authorized to inspect to enable catalog-backed local purchase rewards. Other systems that rely on excluded catalogs may return incomplete results.
 
-## Componentes
+## Components
 
-- `server.py`: rutas HTTP locales.
-- `ws_probe_server.py`: protocolo WebSocket local.
-- `account_store.py`: cuentas, credenciales con hash y sesiones de prueba.
-- `mail_fixture.py`: estado del correo sintético.
-- `run_local_server.py`: lanzador local/LAN.
+- `server.py`: local HTTP routes.
+- `ws_probe_server.py`: local WebSocket protocol handlers.
+- `account_store.py`: accounts, hashed credentials, and test sessions.
+- `mail_fixture.py`: synthetic mail state.
+- `run_local_server.py`: local and LAN launcher.
 
-El servidor se limita a los contratos observados o marcados como sintéticos;
-rechaza métodos no implementados. No configures una instancia pública con este
-código sin completar autenticación, transporte cifrado, seguridad operacional,
-validación y revisión de datos.
+The server implements only observed contracts or behavior clearly marked as synthetic; unsupported methods are rejected. Do not configure a public instance without completing authentication, encrypted transport, operational security, validation, and data review.
 
-## Licencia y APK
+## License and APK
 
-No se incluye el APK original, el APK modificado ni recursos recuperados. No se
-ha asignado una licencia al repositorio porque aún se revisan los derechos del
-código y de los datos derivados del cliente. No agregues una licencia abierta
-ni subas catálogos o binarios hasta terminar esa revisión.
+The original APK, modified APK, and recovered game assets are not included. No license has been assigned to this repository while rights to the code and client-derived data are under review. Do not add an open-source license or upload catalogs or binaries before that review is complete.
+
