@@ -104,7 +104,7 @@ Use this sequence for each game feature. The goal is a reproducible client flow 
 
 - Read the existing implementation, reports, and relevant client call sites before changing code.
 - Record the app build, backend revision, emulator/device and Android version, test account type, and exact steps to reproduce.
-- Start from a working copy of the patched APK. Never edit or overwrite the original APK or its reserved backup.
+- Start from the modified APK downloaded separately from the project's MediaFire distribution. Place it in the repository's `local_apk/` folder for local testing; Git ignores files in that folder. Never edit or overwrite the original APK or its reserved backup, which must stay outside the repository.
 - Use a disposable account and profile. Do not use the project owner's personal beta account.
 - Reproduce the flow once with Frida detached. Save relevant logs and the visible result, with credentials, tokens, email addresses, and personal data removed.
 
@@ -162,7 +162,7 @@ Do not claim success based only on a hook-assisted run, a server unit test, or a
 
 - Do not commit SQLite databases, profiles, test accounts, email addresses, logs, tokens, JWT responses, dumps, screenshots with personal information, or local configuration files.
 - Catalogs under `data/*.json` come from game client tables. They are excluded from Git pending a rights review. Do not force-add them.
-- Keep the original and patched APKs outside the repository. The `.gitignore` blocks APKs by extension; do not use `git add -f` to bypass this.
+- Keep the original APK and its reserved backup outside the repository. The modified APK may be kept in the local `local_apk/` drop folder, whose contents are ignored by Git. The `.gitignore` also blocks APKs by extension; do not use `git add -f` to bypass these protections.
 - The LAN listener is for trusted local-network testing only. Do not expose ports to the public internet or describe the server as production-ready.
 - `generate_lan_launcher.py` may be shared; the `.bat` it creates is local and Git ignores it. Do not force it into the repository.
 - Do not add an open-source license until the rights to each code and data component have been reviewed.
