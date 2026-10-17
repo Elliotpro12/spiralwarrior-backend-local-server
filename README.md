@@ -12,7 +12,7 @@ Still incomplete are, among other things, full level and GP progression, several
 
 ## Run on Windows
 
-Python 3.10 or later is required. The server uses Python's standard library, along with local data catalogs that are not included in this repository because they come from the game client and require a rights review. Read [`project/backend_local/data/README.md`](project/backend_local/data/README.md) before preparing those files.
+Python 3.10 or later is required. The server uses Python's standard library. It can start without the local game-data catalogs excluded from this repository, but catalog-dependent features need those files, and local purchase claims return no rewards until a purchase catalog is supplied. Read [`project/backend_local/data/README.md`](project/backend_local/data/README.md) before preparing local data.
 
 To run the server on this PC, use `python project/backend_local/run_local_server.py`. Instructions for testing from a phone on the same Wi-Fi network, generating a local `.bat` launcher, and configuring the firewall are in [`project/backend_local/README_GITHUB.md`](project/backend_local/README_GITHUB.md).
 
