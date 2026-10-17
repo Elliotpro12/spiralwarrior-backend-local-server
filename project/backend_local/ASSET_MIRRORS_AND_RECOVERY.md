@@ -21,6 +21,13 @@ http://<mirror>/<first-line-of-assets/tryflag>/<path-from-lbresinfo>
 
 The tested prefix was `gameres/trialres/800643/153/aab10b12520b3c6598639a04e5dc4121/`. On 2026-10-17, a single one-byte HTTP Range request to the same small indexed JSON resource returned `206 Partial Content` from each mirror. Earlier preservation runs recovered and integrity-checked all 4,215 indexed resources from the primary mirror. These observations show the endpoints served the tested paths at those times; they do not guarantee future availability.
 
+The exact 4,540-byte sample route used for the current mirror check was:
+
+```text
+http://rcdnaws.loveota.net/gameres/trialres/800643/153/aab10b12520b3c6598639a04e5dc4121/assets/res/import/7f/7f76450f-3725-4050-a617-83ab94337d40.json
+http://rcdnukd.loveota.net/gameres/trialres/800643/153/aab10b12520b3c6598639a04e5dc4121/assets/res/import/7f/7f76450f-3725-4050-a617-83ab94337d40.json
+```
+
 The LeBian domain resolver was also observed returning `www.g.cn` instead of a usable asset host. The recovery scripts therefore use the two static fallback hostnames identified in the client, and construct requests only for exact paths in the supplied index.
 
 ## Reproduce the recovery locally
@@ -66,3 +73,4 @@ CRC32 checks accidental corruption against the package index; it is not a crypto
 For version 153, the index identified 4,215 absent resources totaling 562,138,078 bytes (about 536 MiB). They include JSON metadata, MP3 audio, PKM textures, and PNG images. Re-run the analyzer for another XAPK and use its own index and `tryflag`; counts and paths may differ by version.
 
 Unauthenticated public retrieval does not itself grant permission to redistribute game assets. Keep recovered files and generated indexes outside this repository unless you have confirmed the relevant rights. The scripts deliberately do not enumerate paths or fetch anything outside the supplied index.
+
