@@ -4,6 +4,9 @@
 /*
 !/README.md
 !/.gitignore
+!/local_apk/
+/local_apk/*
+!/local_apk/README.md
 !/project/
 /project/*
 !/project/backend_local/
@@ -60,3 +63,4 @@
 # Local editor/OS files.
 .DS_Store
 Thumbs.db
+
