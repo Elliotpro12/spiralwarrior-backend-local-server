@@ -27,6 +27,22 @@ From the repository root, run the backend on this PC:
 python project/backend_local/run_local_server.py
 ```
 
+### Emulator on the same PC: forward the local ports
+
+The patched APK redirects its HTTP requests to `127.0.0.1:18765` and receives the WebSocket address `127.0.0.1:18766`. Inside Android, `127.0.0.1` is the emulator itself, not the Windows host. When the emulator and backend run on the same PC, keep the backend in its default loopback mode and forward both ports with the emulator's ADB executable:
+
+```powershell
+adb devices -l
+$serial = "127.0.0.1:5559" # Replace with the emulator serial shown above.
+adb -s $serial reverse tcp:18765 tcp:18765
+adb -s $serial reverse tcp:18766 tcp:18766
+adb -s $serial reverse --list
+```
+
+If `adb` is not on `PATH`, call the `adb.exe` bundled with LDPlayer or MuMu instead. The serial varies by emulator instance; use the value reported by `adb devices -l`. Repeat the forwarding commands after reconnecting the emulator. Remove the forwards with `adb -s $serial reverse --remove tcp:18765` and `adb -s $serial reverse --remove tcp:18766`.
+
+The launcher's `/healthz` check only verifies that Windows can reach the HTTP service; it does not test connectivity from Android. A successful health check alone is not proof that the game can reach the backend.
+
 To listen on the local network, run:
 
 ```powershell
