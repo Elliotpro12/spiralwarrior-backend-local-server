@@ -1,139 +1,135 @@
-# Guía para agentes de vibe coding
+# Guide for AI Coding Agents
 
-## Estado y alcance
+## Project status and scope
 
-Este código implementa un backend local de compatibilidad para Spiral Warrior.
-No es una copia del backend original. La estimación vigente es **como mucho
-25% del backend original reconstruido**. No aumentes esa cifra contando rutas
-sintéticas, operaciones solo probadas en aislamiento o código que no se ha
-verificado en el cliente.
+This repository contains a local compatibility backend for Spiral Warrior. It is not a copy of the original server. The current estimate is **at most 25% of the original backend reconstructed**. Do not increase that estimate by counting synthetic routes, isolated experiments, or code that has not been verified with the game client.
 
-Antes de trabajar, lee:
+Before starting, read:
 
-1. `README.md` en la raíz del repositorio.
+1. The root `README.md`.
 2. `project/backend_local/README_GITHUB.md`.
-3. Los informes enlazados por la tarea y el flujo que vas a tocar.
+3. The reports relevant to the feature and client flow you will work on.
 
-En cada hallazgo, separa claramente:
+Label findings as:
 
-- **Observado:** captura o comportamiento visto en el cliente.
-- **Inferido:** explicación compatible con la evidencia, aún no confirmada.
-- **Desconocido:** contrato, regla o respuesta que todavía no se conoce.
+- **Observed:** directly captured from the client or reproduced in the game.
+- **Inferred:** consistent with evidence but not yet confirmed.
+- **Unknown:** a contract, rule, or response that is not yet known.
 
-No inventes rutas, campos de protocolo, recompensas, topes, tasas, errores ni
-respuestas del servidor original. Las respuestas locales sintéticas deben
-identificarse como tales.
+Do not invent routes, protocol fields, rewards, limits, rates, errors, or original-server responses. Clearly label synthetic local responses.
 
-## Herramientas del proyecto
+## Project tools
 
-### Para ejecutar o editar el backend
+### Backend development
 
-- Windows 10/11, PowerShell y Git.
-- Python 3.10 o posterior. El servidor usa la biblioteca estándar; los catálogos
-  locales del juego se proporcionan aparte y no forman parte del repositorio.
-- Node.js/npm solo para tareas de JavaScript del cliente o para instalar REA;
-  no es requisito para arrancar el backend Python.
+- Windows 10/11, PowerShell, and Git.
+- Python 3.10 or later. The server uses the standard library. Local game data catalogs are provided separately and are not part of this repository.
+- Node.js/npm only for JavaScript client tasks or REA installation; Node is not required to run the Python backend.
 
-### Para reproducir el cliente en Android
+### Android client testing
 
-- Para las pruebas dinámicas del cliente: LDPlayer o MuMu Player con acceso
-  root y ADB local activado, o un teléfono con root. Sin uno de esos entornos,
-  puedes trabajar en el backend y hacer análisis estático, pero no reproducir
-  esas pruebas dinámicas.
-- Android SDK Platform-Tools (`adb`) instalado en la PC y conexión ADB local
-  activa para instalar el cliente, interactuar con el dispositivo y recopilar
-  logs.
-- Frida en la PC y `frida-server` compatible con la arquitectura y versión de
-  Frida de la instancia Android. En la investigación quedó registrada Frida
-  17.16.0; cada colaborador debe verificar sus propias versiones.
-- Android SDK Build-Tools (`aapt`, `apksigner`, `zipalign`) y Apktool para
-  inspeccionar o validar paquetes locales. Las notas del proyecto registran
-  Build-Tools 35.0.1 y Apktool 3.0.3.
+- For dynamic client tests, use LDPlayer or MuMu Player with root access and local ADB enabled, or a rooted phone. Without one of these, work on the backend and static analysis, and mark dynamic behavior as unverified.
+- Android SDK Platform-Tools (`adb`) and an active local ADB connection for installing the client, interacting with the device, and collecting logs.
+- Frida on the PC and a compatible `frida-server` for the Android architecture and Frida version. The research environment recorded Frida 17.16.0; verify the versions available in your own setup.
+- Android SDK Build-Tools (`aapt`, `apksigner`, `zipalign`) and Apktool to inspect and validate local packages. The research notes record Build-Tools 35.0.1 and Apktool 3.0.3.
 
-### Para análisis inverso
+### Reverse engineering
 
-- REA (`morluto/rea`) con su skill `reverse-engineer-anything` y, cuando se
-  necesite integración con el agente, su configuración MCP.
-- Ghidra 12.1.4 o IDA Free para análisis nativo; son alternativas, no hace falta
-  instalar ambos.
-- Androguard 4.1.4 para inspección programática de DEX.
-- JADX puede ayudar con Java/DEX, pero la última revisión del entorno no lo
-  encontró en `PATH`; confirma su instalación antes de contar con él.
-- Frida para observaciones dinámicas. Los hooks son instrumentos de diagnóstico:
-  cuando una corrección deba quedar permanente, implementa el cambio en el
-  cliente/backend y repite la prueba sin hooks.
+- REA (`morluto/rea`) with its `reverse-engineer-anything` skill and, when needed, its MCP configuration.
+- Ghidra 12.1.4 or IDA Free for native analysis. These are alternatives; installing both is unnecessary.
+- Androguard 4.1.4 for programmatic DEX inspection.
+- JADX may help with Java/DEX inspection, but it was not found on `PATH` in the last environment review. Confirm it is installed before relying on it.
+- Frida for runtime observations. Hooks are temporary diagnostic tools. When a fix depends on a hook, move that behavior into the APK and/or backend, then verify it with Frida detached.
 
-Las versiones anteriores describen la estación de investigación, no una lista
-de dependencias que el proyecto instale por su cuenta. No subas instaladores,
-emuladores, APKs, `frida-server`, bases de Ghidra/IDA ni claves.
+These versions describe the research workstation; they are not dependencies installed by this repository. Do not upload installers, emulators, APKs, `frida-server`, Ghidra/IDA databases, or signing keys.
 
-## Instalar REA
+## Install REA
 
-La instalación recomendada es pedirle al agente que prepare REA y revise su
-propio plan de configuración. Puedes darle esta instrucción:
+The recommended approach is to ask the coding agent to prepare REA and review its setup plan. For example:
 
-> Instala la skill REA `reverse-engineer-anything` desde
-> https://github.com/morluto/rea y configúrala para este agente si hace falta.
-> Primero revisa los requisitos y el plan de cambios. Reutiliza Ghidra o IDA si
-> ya están instalados; no instales otro motor de análisis ni cambies ajustes
-> existentes sin explicarme qué modificarás. Al terminar, confirma qué skill y
-> herramientas quedaron disponibles.
+> Install the REA `reverse-engineer-anything` skill from https://github.com/morluto/rea and configure it for this agent if needed. First inspect the requirements and proposed changes. Reuse Ghidra or IDA if already installed; do not install another analysis engine or change existing settings without explaining the change. At the end, report which skill and tools are available.
 
-La instalación solo de la skill se documenta como:
+To install only the skill:
 
 ```powershell
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-Para la configuración guiada de REA/MCP, la documentación del proyecto REA usa
-`npx rea-agents setup`. REA requiere una versión compatible de Node.js: 22.x
-(22.19 o posterior), 24.x (24.11 o posterior) o 26 o posterior. Instalar la
-skill no instala por sí solo el servidor MCP ni un motor nativo. El agente debe
-verificar su disponibilidad y pedir aprobación antes de cambios de
-configuración que la requieran.
+For guided REA/MCP setup, the REA project documents `npx rea-agents setup`. REA requires a compatible Node.js release: 22.x (22.19 or later), 24.x (24.11 or later), or 26 or later. Installing the skill alone does not install the MCP server or a native analysis engine. Verify availability and get approval before making configuration changes that require it.
 
-Fuentes: <https://github.com/morluto/rea> y
-<https://github.com/morluto/rea/blob/main/docs/installation.md>.
+Sources: <https://github.com/morluto/rea> and <https://github.com/morluto/rea/blob/main/docs/installation.md>.
 
-## Flujo de trabajo esperado
+## Required feature workflow
 
-1. Reproduce el problema con una cuenta y perfil temporales. No modifiques ni
-   uses la cuenta beta personal del dueño del proyecto.
-2. Identifica el mensaje y callback de cliente con una traza acotada. Guarda
-   evidencia sin credenciales, tokens, correos ni datos personales.
-3. Implementa el contrato mínimo respaldado por evidencia y valida entradas,
-   propiedad del jugador, persistencia, reintentos e idempotencia.
-4. Añade una prueba aislada usando archivos temporales. No cambies perfiles
-   reales para ejecutar verificaciones.
-5. Si el flujo depende de Cocos, confirma en el emulador qué estado muestra el
-   cliente y prueba la corrección sin Frida cuando ya exista un cambio
-   permanente.
-6. Actualiza el informe del sistema con lo probado, lo que no se probó y las
-   hipótesis que siguen abiertas.
+Use this sequence for each game feature. The goal is a reproducible client flow that works with the local backend and without Frida hooks.
 
-No agregues un handler de éxito genérico para silenciar errores. El backend
-debe devolver el estado sincronizado que espera el cliente y no acreditar dos
-veces un reintento.
+### 1. Establish a safe baseline
 
-## Datos y privacidad
+- Read the existing implementation, reports, and relevant client call sites before changing code.
+- Record the app build, backend revision, emulator/device and Android version, test account type, and exact steps to reproduce.
+- Start from a working copy of the patched APK. Never edit or overwrite the original APK or its reserved backup.
+- Use a disposable account and profile. Do not use the project owner's personal beta account.
+- Reproduce the flow once with Frida detached. Save relevant logs and the visible result, with credentials, tokens, email addresses, and personal data removed.
 
-- No subas bases SQLite, perfiles, cuentas, correos de prueba, logs, tokens,
-  respuestas JWT, volcados, capturas con información personal ni archivos de
-  configuración local.
-- Los catálogos de `data/*.json` proceden de tablas del cliente. Están
-  excluidos de Git hasta revisar permisos. No fuerces su inclusión.
-- Mantén el APK original y el APK parcheado fuera del repositorio. El `.gitignore`
-  los bloquea por extensión; no uses `git add -f` para saltarte esa protección.
-- El listener de LAN es solo para pruebas en una red confiable. No abras puertos
-  al Internet ni lo presentes como backend listo para producción.
-- El generador `generate_lan_launcher.py` se puede compartir; el `.bat` que crea
-  es local y Git lo ignora. No lo fuerces al repositorio.
-- No añadas una licencia abierta al repositorio hasta resolver los derechos de
-  cada componente y de los datos que se decida incluir.
+### 2. Use Frida to discover the contract
 
-## Inicio sugerido para una tarea
+- Attach Frida only for the investigation. Hook the smallest relevant methods and keep each trace focused on one action.
+- Capture the caller, request method and path, sanitized request fields, callback/result method, response fields, and the state change shown in the game.
+- If a temporary hook changes or supplies a response, record exactly what it changes. This can prove a hypothesis or help make the flow work during research, but it is not a completed fix.
+- Compare the trace with static analysis, backend logs, and existing reports. Mark each conclusion observed, inferred, or unknown.
+- Keep hook scripts, dumps, and sensitive traces local; do not commit them.
 
-> Lee la guía del agente y el informe del sistema solicitado. Resume la
-> evidencia existente y los desconocidos antes de editar. Trabaja con datos
-> temporales, conserva el límite de reconstrucción del 25% o menos y no cambies
-> APKs, recursos recuperados, cuentas reales ni ajustes globales de REA.
+### 3. Prove the smallest working behavior
+
+- Use the temporary hook to test the smallest response or behavior that makes the client complete the action. Keep a before/after record of the screen and relevant state.
+- Confirm what the client expects on success and failure, including follow-up requests and callbacks. Do not silence errors with a generic success response.
+- Check that rewards or inventory changes belong to the authenticated player, persist to that player's profile, and do not apply twice if the client retries.
+- Treat unobserved rules and values as unknown. Do not use a successful hook experiment as evidence that the original server behaved the same way.
+
+### 4. Implement the permanent path
+
+- Port the confirmed behavior into the local backend: route handling, input validation, player ownership, persistence, response format, and retry/idempotency behavior.
+- Patch only a working copy of the APK when a permanent client change is needed, such as directing the client to the local backend or fixing the request/callback path. Keep the patch small and document it.
+- Remove the dependency on runtime hooks. Do not ship a Frida script, injected hook, or a requirement to attach Frida to use the feature.
+- If evidence shows the feature needs no APK change, document why and still prove that the unmodified client path works with the backend.
+
+### 5. Verify with hooks off
+
+- Stop and relaunch the game with Frida detached and no hook scripts loaded. Reproduce the full flow from a clean process.
+- Confirm the user-visible result and the backend's persisted state. Restart the game and confirm the state remains.
+- Repeat the action where safe to check duplicate requests, retry behavior, and idempotency. Check expected failure cases as well as success.
+- Recheck the nearby menu or flow that could be affected by the change. Use a disposable profile and temporary test data.
+- If the client still needs Frida, the feature is not yet complete. Record the failure and return to the trace; do not report it as fixed.
+
+### 6. Package and clean up APKs
+
+- Build, align, sign, and install the patched working copy. Keep the original APK and its reserved backup unchanged and outside the public repository.
+- After installation, test the latest APK on the target emulator/device and confirm the feature still works without Frida. Record the version, signing result, and SHA-256 for the delivered build.
+- Once the new build passes those checks, remove older **agent-generated** APKs from the delivery/build folder and leave only the newest APK there, so the user does not accumulate large files.
+- Never delete the original APK, its reserved backup, or the newest verified APK during cleanup. Do not remove the previous working build until the replacement has installed and passed verification.
+- Do not commit APKs, `.bat` files, extracted resources, or local catalogs. The launcher generator may be shared; the `.bat` it generates is local and ignored by Git.
+
+### 7. Report the result
+
+For each feature, report:
+
+- What was directly observed, what was inferred, and what remains unknown.
+- The Frida methods/hooks used for discovery and what they established; confirm that final verification ran with hooks detached.
+- Backend and APK files changed, endpoint/contract added or updated, and the resulting client behavior.
+- Device/emulator, app build, test steps, persistence/retry results, and any regressions or remaining failures.
+- The newest verified APK location and SHA-256 if an APK was produced; confirm older generated APKs were cleaned up while the original and backup were preserved.
+
+Do not claim success based only on a hook-assisted run, a server unit test, or a UI animation. Confirm the complete flow in the game with the permanent backend/APK path.
+
+## Data and privacy
+
+- Do not commit SQLite databases, profiles, test accounts, email addresses, logs, tokens, JWT responses, dumps, screenshots with personal information, or local configuration files.
+- Catalogs under `data/*.json` come from game client tables. They are excluded from Git pending a rights review. Do not force-add them.
+- Keep the original and patched APKs outside the repository. The `.gitignore` blocks APKs by extension; do not use `git add -f` to bypass this.
+- The LAN listener is for trusted local-network testing only. Do not expose ports to the public internet or describe the server as production-ready.
+- `generate_lan_launcher.py` may be shared; the `.bat` it creates is local and Git ignores it. Do not force it into the repository.
+- Do not add an open-source license until the rights to each code and data component have been reviewed.
+
+## Suggested task kickoff
+
+> Read this agent guide and the report for the requested system. Summarize the existing evidence, unknowns, and a safe baseline before editing. Use a disposable account and working APK copy. Use Frida hooks only to understand and temporarily prove the client contract; then implement the permanent behavior in the local backend and, when needed, the APK. Verify the complete flow with Frida detached. Preserve the original APK and its backup. After the newest APK passes verification, remove older agent-generated APKs and keep only the latest in the delivery folder. Keep the backend reconstruction estimate at 25% or less, and do not commit APKs, recovered resources, personal data, or local configuration.
