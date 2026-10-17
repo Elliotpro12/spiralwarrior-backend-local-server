@@ -528,8 +528,8 @@ def main() -> None:
                         help="Enable username/email accounts and isolated profiles in this SQLite database.")
     parser.add_argument("--ws-url", default="ws://127.0.0.1:18766",
                         help="Loopback WebSocket URL placed in account login tokens.")
-    parser.add_argument("--free-purchase-catalog", type=Path, default=DEFAULT_FREE_PURCHASE_CATALOG,
-                        help="Allowlisted product and reward data extracted from the local client.")
+    parser.add_argument("--free-purchase-catalog", type=Path,
+                        help="Optional local product and reward catalog extracted from a client copy.")
     parser.add_argument("--log-file", type=Path)
     args = parser.parse_args()
     args.notice_file = args.notice_file.resolve()
@@ -537,7 +537,6 @@ def main() -> None:
     args.auth_response = args.auth_response.resolve() if args.auth_response else None
     args.mail_state_file = args.mail_state_file.resolve()
     args.profile_state_file = args.profile_state_file.resolve()
-    args.free_purchase_catalog = args.free_purchase_catalog.resolve()
     args.accounts_db = args.accounts_db.resolve() if args.accounts_db else None
     args.log_file = args.log_file.resolve() if args.log_file else None
 
@@ -546,9 +545,19 @@ def main() -> None:
     if not args.notice_file.is_file():
         parser.error(f"notice file does not exist: {args.notice_file}")
 
-    if not args.free_purchase_catalog.is_file():
-        parser.error(f"free purchase catalog does not exist: {args.free_purchase_catalog}")
-    catalog_data = _read_json(args.free_purchase_catalog, {})
+    catalog_path = (args.free_purchase_catalog or DEFAULT_FREE_PURCHASE_CATALOG).resolve()
+    if not catalog_path.is_file():
+        if args.free_purchase_catalog is not None:
+            parser.error(f"free purchase catalog does not exist: {catalog_path}")
+        print(
+            "WARNING: Optional local free-purchase catalog is missing at "
+            f"{catalog_path}. Purchase claims will return unknown_local_product "
+            "until a catalog is supplied.",
+            flush=True,
+        )
+        catalog_data = {}
+    else:
+        catalog_data = _read_json(catalog_path, {})
     args.free_purchase_catalog = {
         int(row["id"]): row for row in catalog_data.get("products", [])
         if isinstance(row, dict) and int(row.get("id", 0)) > 0
@@ -580,3 +589,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
