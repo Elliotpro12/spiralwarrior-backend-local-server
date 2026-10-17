@@ -144,12 +144,18 @@ def main() -> int:
     ]
     processes: list[subprocess.Popen] = []
     try:
-        for command in commands:
+        service_names = ("HTTP", "WebSocket")
+        for service_name, command in zip(service_names, commands):
             processes.append(subprocess.Popen(command, cwd=PROJECT_ROOT))
             time.sleep(0.8)
             if processes[-1].poll() is not None:
-                print("Uno de los servicios no pudo iniciar. Revisa si los puertos 18765 o 18766 ya están ocupados.")
-                return int(processes[-1].returncode or 1)
+                return_code = int(processes[-1].returncode or 1)
+                print(
+                    f"El servicio {service_name} no pudo iniciar (código {return_code}). "
+                    "Revisa el mensaje de error anterior; puede señalar un archivo o "
+                    "ajuste faltante, o un puerto ocupado."
+                )
+                return return_code
 
         ready = False
         for _ in range(30):
@@ -200,3 +206,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
