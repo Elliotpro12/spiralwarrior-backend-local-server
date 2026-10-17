@@ -51,6 +51,35 @@ Do not invent routes, protocol fields, rewards, limits, rates, errors, or origin
 
 These versions describe the research workstation; they are not dependencies installed by this repository. Do not upload installers, emulators, APKs, `frida-server`, Ghidra/IDA databases, or signing keys.
 
+## Agent preflight: tools, device, and access
+
+Before starting a task, identify which tools it actually needs, then check their availability and versions. The entire tool list above is not required for every task. Do not claim a runtime test was performed when the required device or access is unavailable.
+
+### Match checks to the task
+
+| Work type | Check first | Required when |
+| --- | --- | --- |
+| Backend-only changes | Python 3.10+, Git, and the ability to start the local server | Implementing or investigating backend behavior |
+| Android runtime tests | `adb version`, `adb devices -l`, Android version, and a reachable target | Installing the client, reproducing a flow, collecting device logs, or validating a fix |
+| Root-only runtime work | Root access on the selected emulator or phone | A task needs protected app data, root-only inspection, or the device-side Frida server |
+| Frida investigation | `frida --version`, `frida-ps -U`, and a compatible, reachable `frida-server` | Observing or temporarily testing client behavior at runtime |
+| APK inspection/build | `apktool --version`, `aapt version`, `apksigner version`, and `zipalign -h` | Decoding, rebuilding, aligning, or signing an APK |
+| Java/DEX analysis | `jadx --version` or `jadx-gui` | Static inspection of Java or DEX code |
+| Native/programmatic analysis | Ghidra or IDA Free; Androguard if the planned analysis uses it | The target or question requires native-code or scripted binary analysis |
+| REA-assisted reverse engineering | The REA skill and any required MCP configuration | The task benefits from REA workflows or the agent is asked to use REA |
+
+### Verify Android access explicitly
+
+For a task that needs dynamic testing, first inspect connected devices and identify the intended target. If multiple emulators or phones are connected, ask which one to use before installing or changing app state. Confirm the selected device's Android version and that ADB can reach it. Check root separately: an ADB connection does not imply root, and `adb root` is not supported by every production build or emulator image. Where appropriate, verify with `adb shell su -c id` or the emulator's documented root mechanism. Record the device serial, emulator/model, Android version, and root status without recording personal device data.
+
+For Frida work, check the host Frida version, device architecture, and `frida-server` availability/version. Confirm that the server is reachable before attempting hooks. A version or architecture mismatch is a setup issue to resolve before drawing conclusions from a failed attach.
+
+### Report gaps and ask only for required access
+
+At task kickoff, summarize the preflight as **Available**, **Missing**, or **Not needed**, including versions and the selected device where relevant. If an essential item is missing or cannot be verified, ask the user one concise, grouped question for the missing setup (for example, start the intended emulator with local ADB enabled and root access, or provide its device serial). Continue independent static or backend work while waiting. If the user cannot provide the required runtime, mark the dynamic result **unverified** and state what evidence is still needed; do not imply that static analysis proved runtime behavior.
+
+Do not silently install tools, update the Android SDK, change emulator root/security settings, or alter device state to satisfy a preflight. Explain the proposed change and ask before making environment-wide or device configuration changes. A simple read-only availability/version check does not require confirmation.
+
 ## Install REA
 
 The recommended approach is to ask the coding agent to prepare REA and review its setup plan. For example:
@@ -141,3 +170,4 @@ Do not claim success based only on a hook-assisted run, a server unit test, or a
 ## Suggested task kickoff
 
 > Read this agent guide and the report for the requested system. Summarize the existing evidence, unknowns, and a safe baseline before editing. Use a disposable account and working APK copy. Use Frida hooks only to understand and temporarily prove the client contract; then implement the permanent behavior in the local backend and, when needed, the APK. Verify the complete flow with Frida detached. Preserve the original APK and its backup. After the newest APK passes verification, remove older agent-generated APKs and keep only the latest in the delivery folder. Keep the backend reconstruction estimate at 25% or less, and do not commit APKs, recovered resources, personal data, or local configuration.
+
