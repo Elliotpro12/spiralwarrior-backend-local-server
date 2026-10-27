@@ -7,3 +7,4 @@ This folder is a local drop location for the modified Spiral Warrior APK used fo
 3. Keep the original APK and its backup outside this repository.
 
 Git intentionally ignores this folder's contents. Do not force-add or commit APKs, recovered game resources, or other client packages.
+

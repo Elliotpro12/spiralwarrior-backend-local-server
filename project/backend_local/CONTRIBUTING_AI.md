@@ -170,3 +170,4 @@ Do not claim success based only on a hook-assisted run, a server unit test, or a
 ## Suggested task kickoff
 
 > Read this agent guide and the report for the requested system. Summarize the existing evidence, unknowns, and a safe baseline before editing. Use a disposable account and working APK copy. Use Frida hooks only to understand and temporarily prove the client contract; then implement the permanent behavior in the local backend and, when needed, the APK. Verify the complete flow with Frida detached. Preserve the original APK and its backup. After the newest APK passes verification, remove older agent-generated APKs and keep only the latest in the delivery folder. Keep the backend reconstruction estimate at 25% or less, and do not commit APKs, recovered resources, personal data, or local configuration.
+

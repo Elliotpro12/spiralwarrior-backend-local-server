@@ -111,3 +111,4 @@ The server implements only observed contracts or behavior clearly marked as synt
 ## License and APK
 
 The original APK, modified APK, and recovered game assets are not included. No license has been assigned to this repository while rights to the code and client-derived data are under review. Do not add an open-source license or upload catalogs or binaries before that review is complete.
+

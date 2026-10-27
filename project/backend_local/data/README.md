@@ -13,3 +13,4 @@ Other catalog-backed game systems may return incomplete results when their local
 If you have a client copy and are authorized to inspect its data, create the catalog files needed for your test in this directory. Keep them on your workstation; do not add them to Git or share them without reviewing their provenance and redistribution rights. The server accepts a custom purchase catalog path through `--free-purchase-catalog` when running `server.py` directly; otherwise it looks for `local_free_purchase_catalog.json` in this directory.
 
 Never publish account databases, profiles, test-account details, logs, tokens, extracted game assets, or private catalog files.
+

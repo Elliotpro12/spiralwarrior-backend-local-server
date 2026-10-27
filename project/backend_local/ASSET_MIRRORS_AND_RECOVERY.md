@@ -73,3 +73,4 @@ CRC32 checks accidental corruption against the package index; it is not a crypto
 For version 153, the index identified 4,215 absent resources totaling 562,138,078 bytes (about 536 MiB). They include JSON metadata, MP3 audio, PKM textures, and PNG images. Re-run the analyzer for another XAPK and use its own index and `tryflag`; counts and paths may differ by version.
 
 Unauthenticated public retrieval does not itself grant permission to redistribute game assets. Keep recovered files and generated indexes outside this repository unless you have confirmed the relevant rights. The scripts deliberately do not enumerate paths or fetch anything outside the supplied index.
+
