@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spiral Warrior · Admin local</title>
+<style>
+  :root {
+    --bg: #15121f; --panel: #201b2f; --line: #3a3150; --text: #f3efff; --muted: #a79ec0;
+    --accent: #f5c542; --accent-2: #7c5cff; --danger: #ff6b6b; --ok: #58d68d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f1fa; --panel: #ffffff; --line: #d9d2ea; --text: #201b2f; --muted: #6d6585;
+      --accent: #b8860b; --accent-2: #5b3fd6; --danger: #c0392b; --ok: #1e8449;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15121f; --panel: #201b2f; --line: #3a3150; --text: #f3efff; --muted: #a79ec0;
+    --accent: #f5c542; --accent-2: #7c5cff; --danger: #ff6b6b; --ok: #58d68d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 16px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  h3 { font-size: 14px; margin: 16px 0 8px; color: var(--muted); }
+  main { max-width: 820px; margin: 0 auto; padding: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+         padding: 8px 16px; cursor: pointer; font: inherit; }
+  .tab[aria-selected="true"] { color: #1a1408; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  input, textarea, select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+                            border-radius: 8px; padding: 9px 10px; font: inherit; }
+  input[type="checkbox"] { width: auto; }
+  textarea { min-height: 120px; resize: vertical; }
+  button { font: inherit; border-radius: 8px; border: 0; padding: 9px 14px; cursor: pointer; }
+  .btn { background: var(--accent-2); color: #fff; font-weight: 600; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  .btn.small { padding: 6px 10px; }
+  .btn.remove { background: transparent; color: var(--danger); border: 1px solid var(--line); }
+  .hint { color: var(--muted); font-size: 13px; }
+  .msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; display: none; }
+  .msg.ok { display: block; color: var(--ok); border: 1px solid var(--ok); }
+  .msg.err { display: block; color: var(--danger); border: 1px solid var(--danger); }
+  .counter { text-align: right; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .hidden { display: none !important; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--text); }
+
+  .icon { width: 44px; height: 44px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line);
+          display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 18px; flex: none; }
+  .icon img { width: 100%; height: 100%; object-fit: contain; }
+  .name { font-weight: 600; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 13px; }
+
+  .results { border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; max-height: 300px; overflow-y: auto; }
+  .results:empty { display: none; }
+  .item-line { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center;
+               padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .item-line:last-child { border-bottom: 0; }
+  .att { display: grid; grid-template-columns: 44px 1fr 120px 40px; gap: 10px; align-items: center; margin-top: 8px; }
+  .att input { padding: 7px 10px; }
+  .history-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
+                 padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .history-row:last-child { border-bottom: 0; }
+  .preview { white-space: pre-wrap; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px;
+             padding: 10px; margin-top: 12px; }
+
+  @media (max-width: 520px) {
+    main { padding: 12px; }
+    .att { grid-template-columns: 40px 1fr 84px 36px; gap: 8px; }
+    .att .icon, .item-line .icon { width: 40px; height: 40px; }
+    .item-line { grid-template-columns: 40px 1fr auto; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 data-i18n="appTitle">Spiral Warrior · Admin local</h1>
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <input id="token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Token de admin" autocomplete="off" style="width:220px;">
+    <button class="btn ghost small" id="saveToken" data-i18n="save">Guardar</button>
+    <span class="pill" id="accounts"></span>
+  </div>
+</header>
+
+<main>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-tab="mail" data-i18n="tabMail">Enviar correo</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="items" data-i18n="tabItems">Lista de objetos</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="notice" data-i18n="tabNotice">Tablón de anuncios</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="history" data-i18n="tabHistory">Historial</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="settings" data-i18n="tabSettings">Ajustes</button>
+  </div>
+
+  <section id="tab-mail" class="panel">
+    <h2 data-i18n="mailHeading">Correo con objetos</h2>
+    <p class="hint" data-i18n="mailHint">Los objetos se entregan al reclamar el correo en el juego. Busca por nombre o por ID y ajusta la cantidad.</p>
+
+    <label for="mailTitle" data-i18n="mailTitleLabel">Título (máx. 60)</label>
+    <input id="mailTitle" maxlength="60" data-i18n-placeholder="mailTitlePh" placeholder="Compensación por mantenimiento">
+
+    <label for="mailBody" data-i18n="mailBodyLabel">Mensaje (máx. 2000)</label>
+    <textarea id="mailBody" maxlength="2000" data-i18n-placeholder="mailBodyPh" placeholder="Escribe el mensaje que verá el jugador"></textarea>
+    <div class="counter" id="bodyCount">0 / 2000</div>
+
+    <label for="mailFrom" data-i18n="mailFromLabel">Remitente (máx. 24)</label>
+    <input id="mailFrom" maxlength="24" value="Spiral Warrior Team">
+
+    <label for="recipients" data-i18n="recipientsLabel">Destinatarios</label>
+    <select id="recipients">
+      <option value="all" data-i18n="optAll">Todos los jugadores</option>
+      <option value="ids" data-i18n="optIds">IDs de jugador concretos</option>
+    </select>
+    <input id="recipientIds" class="hidden" data-i18n-placeholder="recipientIdsPh" placeholder="Ej: 100000004, 100000005" style="margin-top:8px;">
+
+    <label for="itemSearch" data-i18n="itemSearchLabel">Añadir objeto (nombre o ID)</label>
+    <input id="itemSearch" type="search" data-i18n-placeholder="itemSearchPh" placeholder="Ej: Gold, Gem o 1227894833" autocomplete="off">
+    <div class="results" id="itemResults"></div>
+
+    <label><span data-i18n="attachmentsLabel">Objetos adjuntos</span> <span class="pill" id="attCount">0 / 10</span></label>
+    <div id="attachments"></div>
+    <div class="presets">
+      <button class="btn ghost small" data-preset="gold" data-i18n="presetGold">+ Oro</button>
+      <button class="btn ghost small" data-preset="diamond" data-i18n="presetDiamond">+ Diamantes</button>
+      <button class="btn ghost small" data-preset="ticket" data-i18n="presetTicket">+ Ticket de gacha</button>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="sendMail" data-i18n="sendMail">Enviar correo</button>
+    </div>
+    <div class="msg" id="mailMsg"></div>
+  </section>
+
+  <section id="tab-items" class="panel hidden">
+    <h2 data-i18n="tabItems">Lista de objetos</h2>
+    <p class="hint" id="itemTotal" data-i18n="itemsHint">Carga el catálogo con el token de admin.</p>
+    <div style="display:grid; gap:8px;">
+      <input id="itemFilter" type="search" data-i18n-placeholder="itemFilterPh" placeholder="Filtrar por nombre o ID" autocomplete="off">
+      <div class="hint" id="itemCount"></div>
+    </div>
+    <div id="itemList" style="margin-top:8px;"></div>
+    <div class="actions">
+      <button class="btn ghost" id="moreItems" data-i18n="showMore">Mostrar más</button>
+    </div>
+  </section>
+
+  <section id="tab-notice" class="panel hidden">
+    <h2 data-i18n="tabNotice">Tablón de anuncios</h2>
+    <p class="hint" data-i18n="noticeHint">Es el texto que ven los jugadores al abrir el anuncio. Texto plano, máx. 8000 caracteres.</p>
+    <textarea id="noticeText" maxlength="8000" style="min-height:260px;"></textarea>
+    <div class="counter" id="noticeCount">0 / 8000</div>
+    <div class="actions">
+      <button class="btn" id="saveNotice" data-i18n="saveNotice">Guardar tablón</button>
+      <button class="btn ghost" id="reloadNotice" data-i18n="reloadNotice">Recargar</button>
+    </div>
+    <div class="msg" id="noticeMsg"></div>
+
+    <h3 data-i18n="historyHeading">Versiones del tablón</h3>
+    <div id="noticeHistory"></div>
+    <div class="preview hidden" id="noticePreview"></div>
+    <div class="actions hidden" id="previewActions">
+      <button class="btn ghost small" id="closePreview" data-i18n="closePreview">Cerrar</button>
+    </div>
+  </section>
+
+  <section id="tab-history" class="panel hidden">
+    <h2 data-i18n="historyTabHeading">Historial</h2>
+    <h3 data-i18n="mailHistoryHeading">Correos enviados</h3>
+    <div id="mailHistory"></div>
+    <h3 data-i18n="noticeHistoryHeading">Anuncios anteriores</h3>
+    <div id="noticeHistoryList"></div>
+  </section>
+
+  <section id="tab-settings" class="panel hidden">
+    <h2 data-i18n="settingsHeading">Ajustes</h2>
+
+    <label for="language" data-i18n="langLabel">Idioma</label>
+    <select id="language">
+      <option value="es">Español</option>
+      <option value="en">English</option>
+    </select>
+
+    <label class="check"><input id="rememberToken" type="checkbox" checked>
+      <span data-i18n="rememberToken">Recordar el token en este navegador</span></label>
+    <p class="hint" data-i18n="rememberHint">Se guarda solo en este navegador. Desmarcarlo lo deja solo mientras la pestaña esté abierta.</p>
+
+    <div class="actions">
+      <button class="btn ghost" id="forgetToken" data-i18n="forgetToken">Olvidar token</button>
+    </div>
+    <div class="msg" id="settingsMsg"></div>
+  </section>
+</main>
+
+<script>
+const PRESETS = {
+  gold: { item: "1227894833", num: 1000 },
+  diamond: { item: "1227894834", num: 100 },
+  ticket: { item: "5000", num: 5 },
+};
+const MAX_ATTACHMENTS = 10;
+const LIST_PAGE = 100;
+const RESULT_LIMIT = 12;
+const TOKEN_KEY = "spiralAdminToken";
+const REMEMBER_KEY = "spiralAdminRemember";
+const LANG_KEY = "spiralAdminLang";
+
+const STRINGS = {
+  es: {
+    appTitle: "Spiral Warrior · Admin local",
+    tokenPlaceholder: "Token de admin",
+    save: "Guardar",
+    accounts: "cuentas: {0}",
+    accountsUnknown: "cuentas: —",
+    tabMail: "Enviar correo",
+    tabItems: "Lista de objetos",
+    tabNotice: "Tablón de anuncios",
+    tabSettings: "Ajustes",
+    tabHistory: "Historial",
+    historyTabHeading: "Historial",
+    mailHistoryHeading: "Correos enviados",
+    noticeHistoryHeading: "Anuncios anteriores",
+    mailHistoryEmpty: "Todavía no se ha enviado ningún correo desde este panel.",
+    mailRecipientsAll: "Todos los jugadores",
+    mailRecipientsCount: "{0} jugador(es)",
+    mailCopies: "{0} copia(s)",
+    mailNoAttachments: "Sin adjuntos",
+    noticeViewInTab: "Ver",
+    mailHeading: "Correo con objetos",
+    mailHint: "Los objetos se entregan al reclamar el correo en el juego. Busca por nombre o por ID y ajusta la cantidad.",
+    mailTitleLabel: "Título (máx. 60)",
+    mailTitlePh: "Compensación por mantenimiento",
+    mailBodyLabel: "Mensaje (máx. 2000)",
+    mailBodyPh: "Escribe el mensaje que verá el jugador",
+    mailFromLabel: "Remitente (máx. 24)",
+    recipientsLabel: "Destinatarios",
+    optAll: "Todos los jugadores",
+    optIds: "IDs de jugador concretos",
+    recipientIdsPh: "Ej: 100000004, 100000005",
+    itemSearchLabel: "Añadir objeto (nombre o ID)",
+    itemSearchPh: "Ej: Gold, Gem o 1227894833",
+    attachmentsLabel: "Objetos adjuntos",
+    presetGold: "+ Oro",
+    presetDiamond: "+ Diamantes",
+    presetTicket: "+ Ticket de gacha",
+    sendMail: "Enviar correo",
+    noResults: "Sin resultados. Si conoces el ID, escríbelo y pulsa Enter.",
+    add: "Añadir",
+    addToMail: "Usar en correo",
+    removeTitle: "Quitar",
+    qtyTitle: "Cantidad",
+    unknownId: "ID desconocido",
+    noIconTitle: "Sin icono en el catálogo",
+    noName: "Sin nombre",
+    itemsHint: "Carga el catálogo con el token de admin.",
+    itemsTotal: "{0} objetos en el catálogo.",
+    itemsShowing: "Mostrando {0} de {1} objetos",
+    itemFilterPh: "Filtrar por nombre o ID",
+    showMore: "Mostrar más",
+    catalogError: "No se cargó el catálogo de objetos: {0}",
+    maxAttachments: "Máximo {0} objetos por correo.",
+    recipientNeeded: "Escribe al menos un ID de jugador.",
+    mailSent: "Correo {0} enviado a {1} cuenta(s), con {2} adjunto(s).",
+    mailNotSent: "No se envió: {0}",
+    noticeHeading: "Tablón de anuncios",
+    noticeHint: "Es el texto que ven los jugadores al abrir el anuncio. Texto plano, máx. 8000 caracteres.",
+    saveNotice: "Guardar tablón",
+    reloadNotice: "Recargar",
+    noticeSaved: "Tablón guardado ({0} caracteres).",
+    noticeNotSaved: "No se guardó: {0}",
+    noticeLoadError: "No se pudo cargar: {0}",
+    historyHeading: "Versiones del tablón",
+    currentVersion: "Actual",
+    replacedAt: "Reemplazada el {0}",
+    historyEmpty: "Todavía no hay versiones anteriores.",
+    viewVersion: "Ver",
+    useDraft: "Usar como borrador",
+    closePreview: "Cerrar",
+    settingsHeading: "Ajustes",
+    langLabel: "Idioma",
+    rememberToken: "Recordar el token en este navegador",
+    rememberHint: "Se guarda solo en este navegador. Desmarcarlo lo deja solo mientras la pestaña esté abierta.",
+    forgetToken: "Olvidar token",
+    tokenForgotten: "Token eliminado de este navegador.",
+    tokenSaved: "Token guardado.",
+  },
+  en: {
+    appTitle: "Spiral Warrior · Local admin",
+    tokenPlaceholder: "Admin token",
+    save: "Save",
+    accounts: "accounts: {0}",
+    accountsUnknown: "accounts: —",
+    tabMail: "Send mail",
+    tabItems: "Item list",
+    tabNotice: "Notice board",
+    tabSettings: "Settings",
+    tabHistory: "History",
+    historyTabHeading: "History",
+    mailHistoryHeading: "Mail sent",
+    noticeHistoryHeading: "Previous notices",
+    mailHistoryEmpty: "No mail has been sent from this panel yet.",
+    mailRecipientsAll: "All players",
+    mailRecipientsCount: "{0} player(s)",
+    mailCopies: "{0} copy(ies)",
+    mailNoAttachments: "No attachments",
+    noticeViewInTab: "View",
+    mailHeading: "Mail with items",
+    mailHint: "Items are delivered when the player claims the mail in the game. Search by name or ID and adjust the quantity.",
+    mailTitleLabel: "Title (max. 60)",
+    mailTitlePh: "Maintenance compensation",
+    mailBodyLabel: "Message (max. 2000)",
+    mailBodyPh: "Write the message the player will see",
+    mailFromLabel: "Sender (max. 24)",
+    recipientsLabel: "Recipients",
+    optAll: "All players",
+    optIds: "Specific player IDs",
+    recipientIdsPh: "E.g. 100000004, 100000005",
+    itemSearchLabel: "Add item (name or ID)",
+    itemSearchPh: "E.g. Gold, Gem or 1227894833",
+    attachmentsLabel: "Attached items",
+    presetGold: "+ Gold",
+    presetDiamond: "+ Diamonds",
+    presetTicket: "+ Gacha ticket",
+    sendMail: "Send mail",
+    noResults: "No results. If you know the ID, type it and press Enter.",
+    add: "Add",
+    addToMail: "Use in mail",
+    removeTitle: "Remove",
+    qtyTitle: "Quantity",
+    unknownId: "Unknown ID",
+    noIconTitle: "No icon in the catalog",
+    noName: "No name",
+    itemsHint: "Load the catalog with the admin token.",
+    itemsTotal: "{0} items in the catalog.",
+    itemsShowing: "Showing {0} of {1} items",
+    itemFilterPh: "Filter by name or ID",
+    showMore: "Show more",
+    catalogError: "The item catalog did not load: {0}",
+    maxAttachments: "Maximum {0} items per mail.",
+    recipientNeeded: "Write at least one player ID.",
+    mailSent: "Mail {0} sent to {1} account(s), with {2} attachment(s).",
+    mailNotSent: "Not sent: {0}",
+    noticeHeading: "Notice board",
+    noticeHint: "This is the text players see when they open the notice. Plain text, max. 8000 characters.",
+    saveNotice: "Save notice",
+    reloadNotice: "Reload",
+    noticeSaved: "Notice saved ({0} characters).",
+    noticeNotSaved: "Not saved: {0}",
+    noticeLoadError: "Could not load: {0}",
+    historyHeading: "Notice versions",
+    currentVersion: "Current",
+    replacedAt: "Replaced on {0}",
+    historyEmpty: "There are no earlier versions yet.",
+    viewVersion: "View",
+    useDraft: "Use as draft",
+    closePreview: "Close",
+    settingsHeading: "Settings",
+    langLabel: "Language",
+    rememberToken: "Remember the token in this browser",
+    rememberHint: "It is stored only in this browser. Unchecking it keeps the token only while the tab is open.",
+    forgetToken: "Forget token",
+    tokenForgotten: "Token removed from this browser.",
+    tokenSaved: "Token saved.",
+  },
+};
+
+const $ = (id) => document.getElementById(id);
+let lang = "es";
+let catalog = [];
+let catalogById = new Map();
+let attachments = [];
+let lastResults = [];
+let listLimit = LIST_PAGE;
+let noticeVersions = { current: "", history: [] };
+const iconCache = new Map();
+
+function t(key, ...args) {
+  const table = STRINGS[lang] || STRINGS.es;
+  const text = table[key] !== undefined ? table[key] : STRINGS.es[key] || key;
+  return text.replace(/\{(\d+)\}/g, (match, index) => (args[index] !== undefined ? String(args[index]) : match));
+}
+
+// Browser storage is a per-viewer convenience: every read and write is guarded.
+function storageGet(store, key) {
+  try { return store.getItem(key) || ""; } catch (e) { return ""; }
+}
+function storageSet(store, key, value) {
+  try { store.setItem(key, value); } catch (e) { /* private window or blocked storage */ }
+}
+function storageRemove(store, key) {
+  try { store.removeItem(key); } catch (e) { /* ignore */ }
+}
+
+function currentToken() {
+  return $("token").value.trim();
+}
+
+function rememberEnabled() {
+  return storageGet(localStorage, REMEMBER_KEY) !== "0";
+}
+
+function loadSavedToken() {
+  const remembered = storageGet(localStorage, TOKEN_KEY);
+  return remembered || storageGet(sessionStorage, TOKEN_KEY);
+}
+
+function saveToken(token) {
+  if ($("rememberToken").checked) {
+    storageSet(localStorage, TOKEN_KEY, token);
+    storageRemove(sessionStorage, TOKEN_KEY);
+  } else {
+    storageSet(sessionStorage, TOKEN_KEY, token);
+    storageRemove(localStorage, TOKEN_KEY);
+  }
+  storageSet(localStorage, REMEMBER_KEY, $("rememberToken").checked ? "1" : "0");
+}
+
+function forgetToken() {
+  storageRemove(localStorage, TOKEN_KEY);
+  storageRemove(sessionStorage, TOKEN_KEY);
+  $("token").value = "";
+  iconCache.clear();
+  showMsg($("settingsMsg"), t("tokenForgotten"), true);
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function showMsg(target, text, ok) {
+  target.textContent = text;
+  target.className = "msg " + (ok ? "ok" : "err");
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Token": currentToken(),
+      ...(options.headers || {}),
+    },
+  });
+  let data = {};
+  try { data = await response.json(); } catch (e) { data = {}; }
+  if (!response.ok) {
+    const message = data.message || data.error || ("HTTP " + response.status);
+    throw new Error(message);
+  }
+  return data;
+}
+
+// Icons need the admin token header, so they are fetched once and reused as blob URLs.
+function loadIcon(id) {
+  if (!iconCache.has(id)) {
+    iconCache.set(id, fetch(`/admin/api/items/${id}/icon`, {
+      headers: { "X-Admin-Token": currentToken() },
+    })
+      .then((response) => (response.ok ? response.blob() : null))
+      .then((blob) => (blob ? URL.createObjectURL(blob) : null))
+      .catch(() => null));
+  }
+  return iconCache.get(id);
+}
+
+function iconBox(item) {
+  const box = el("div", "icon", "?");
+  if (item.icon) {
+    box.dataset.iconId = String(item.id);
+    box.textContent = "";
+  } else {
+    box.title = t("noIconTitle");
+  }
+  return box;
+}
+
+async function hydrateIcons(root) {
+  const boxes = [...root.querySelectorAll("[data-icon-id]")];
+  await Promise.all(boxes.map(async (box) => {
+    const url = await loadIcon(box.dataset.iconId);
+    if (!box.isConnected) return;
+    if (url) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      box.replaceChildren(img);
+    } else {
+      box.textContent = "?";
+    }
+  }));
+}
+
+function nameOf(id) {
+  const item = catalogById.get(String(id));
+  return item ? item.name : t("unknownId");
+}
+
+function matchesQuery(item, query) {
+  return String(item.id).includes(query) || item.name.toLowerCase().includes(query);
+}
+
+// One catalog row: [icon] NAME / [ID], with an action button.
+function itemRow(item, buttonLabel, onPick) {
+  const row = el("div", "item-line");
+  const info = el("div");
+  info.append(el("div", "name", item.name || t("noName")), el("div", "meta", `[${item.id}]`));
+  const button = el("button", "btn ghost small", buttonLabel);
+  button.onclick = () => onPick(item.id);
+  row.append(iconBox(item), info, button);
+  return row;
+}
+
+function addAttachment(itemId, num = 1) {
+  if (attachments.length >= MAX_ATTACHMENTS) {
+    return showMsg($("mailMsg"), t("maxAttachments", MAX_ATTACHMENTS), false);
+  }
+  attachments.push({ item: String(itemId), num });
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const list = $("attachments");
+  list.replaceChildren();
+  attachments.forEach((attachment, index) => {
+    const item = catalogById.get(attachment.item) || { id: attachment.item, name: t("unknownId"), icon: false };
+    const row = el("div", "att");
+    const info = el("div");
+    info.append(el("div", "name", item.name), el("div", "meta", `[${attachment.item}]`));
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.max = "1000000000";
+    qty.value = String(attachment.num);
+    qty.title = t("qtyTitle");
+    qty.oninput = () => { attachments[index].num = Number(qty.value); };
+    const remove = el("button", "btn remove small", "✕");
+    remove.title = t("removeTitle");
+    remove.onclick = () => {
+      attachments.splice(index, 1);
+      renderAttachments();
+    };
+    row.append(iconBox(item), info, qty, remove);
+    list.appendChild(row);
+  });
+  $("attCount").textContent = `${attachments.length} / ${MAX_ATTACHMENTS}`;
+  hydrateIcons(list);
+}
+
+function renderSearchResults() {
+  const query = $("itemSearch").value.trim().toLowerCase();
+  const box = $("itemResults");
+  box.replaceChildren();
+  lastResults = [];
+  if (!query) return;
+  lastResults = catalog.filter((item) => matchesQuery(item, query)).slice(0, RESULT_LIMIT);
+  if (!lastResults.length) {
+    box.appendChild(el("div", "hint", t("noResults")));
+    return;
+  }
+  lastResults.forEach((item) => box.appendChild(itemRow(item, t("add"), pickFromSearch)));
+  hydrateIcons(box);
+}
+
+function pickFromSearch(itemId) {
+  addAttachment(itemId, 1);
+  $("itemSearch").value = "";
+  renderSearchResults();
+}
+
+function renderItemList() {
+  const query = $("itemFilter").value.trim().toLowerCase();
+  const matches = query ? catalog.filter((item) => matchesQuery(item, query)) : catalog;
+  const shown = matches.slice(0, listLimit);
+  const list = $("itemList");
+  list.replaceChildren();
+  shown.forEach((item) => list.appendChild(itemRow(item, t("addToMail"), useInMail)));
+  $("itemCount").textContent = t("itemsShowing", shown.length, matches.length);
+  $("moreItems").classList.toggle("hidden", shown.length >= matches.length);
+  hydrateIcons(list);
+}
+
+function useInMail(itemId) {
+  addAttachment(itemId, 1);
+  showTab("mail");
+}
+
+async function loadMailHistory() {
+  try {
+    const data = await api("/admin/api/mail/history");
+    renderMailHistory(data.mails);
+  } catch (e) {
+    $("mailHistory").textContent = e.message;
+  }
+}
+
+function renderMailHistory(mails) {
+  const list = $("mailHistory");
+  list.replaceChildren();
+  if (!mails.length) {
+    list.appendChild(el("div", "hint", t("mailHistoryEmpty")));
+    return;
+  }
+  mails.forEach((mail) => {
+    const row = el("div", "history-row");
+    const info = el("div");
+    const recipients = mail.recipients === "all" ? t("mailRecipientsAll") : t("mailRecipientsCount", mail.recipients.length);
+    info.append(el("div", "name", mail.title || "—"), el("div", "meta", `${formatTime(mail.sent_at)} · ${recipients} · ${t("mailCopies", mail.copies)}`));
+    const attachments = (mail.attachments || []).map((a) => `${nameOf(a.item)} [${a.item}] x${a.num}`);
+    info.append(el("div", "meta", attachments.length ? attachments.join(" · ") : t("mailNoAttachments")));
+    row.append(info);
+    list.appendChild(row);
+  });
+}
+
+function renderNoticeHistoryTab() {
+  const list = $("noticeHistoryList");
+  list.replaceChildren();
+  const { current, history } = noticeVersions;
+  list.appendChild(noticeTabRow(t("currentVersion"), current));
+  history.forEach((version) => list.appendChild(noticeTabRow(t("replacedAt", formatTime(version.replaced_at)), version.text)));
+}
+
+function noticeTabRow(label, text) {
+  const row = el("div", "history-row");
+  const info = el("div");
+  info.append(el("div", "name", label), el("div", "meta", (text || "").split(String.fromCharCode(10))[0].slice(0, 90)));
+  const view = el("button", "btn ghost small", t("noticeViewInTab"));
+  view.onclick = () => { showTab("notice"); showNoticePreview(text); };
+  row.append(info, view);
+  return row;
+}
+
+function showTab(name) {
+  if (name === "history") { loadMailHistory(); renderNoticeHistoryTab(); }
+  document.querySelectorAll(".tab").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.tab === name)));
+  for (const section of ["mail", "items", "notice", "history", "settings"]) {
+    $("tab-" + section).classList.toggle("hidden", section !== name);
+  }
+}
+
+async function loadCatalog() {
+  try {
+    const data = await api("/admin/api/items");
+    catalog = data.items;
+    catalogById = new Map(catalog.map((item) => [String(item.id), item]));
+    $("itemTotal").textContent = t("itemsTotal", data.count);
+    renderAttachments();
+    renderSearchResults();
+    renderItemList();
+  } catch (e) {
+    $("itemTotal").textContent = t("catalogError", e.message);
+    showMsg($("mailMsg"), t("catalogError", e.message), false);
+  }
+}
+
+function recipientsValue() {
+  if ($("recipients").value === "all") return "all";
+  return $("recipientIds").value.trim();
+}
+
+function formatTime(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(lang === "en" ? "en-US" : "es-PR");
+}
+
+function renderNoticeHistory() {
+  const list = $("noticeHistory");
+  list.replaceChildren();
+  const { current, history } = noticeVersions;
+  list.appendChild(noticeRow(t("currentVersion"), current, current));
+  if (!history.length) {
+    list.appendChild(el("div", "hint", t("historyEmpty")));
+    return;
+  }
+  history.forEach((version) => {
+    list.appendChild(noticeRow(t("replacedAt", formatTime(version.replaced_at)), version.text, version.text));
+  });
+}
+
+function noticeRow(label, text, versionText) {
+  const row = el("div", "history-row");
+  const info = el("div");
+  info.append(el("div", "name", label), el("div", "meta", (text || "").split(String.fromCharCode(10))[0].slice(0, 90)));
+  const actions = el("div", "");
+  actions.style.display = "flex";
+  actions.style.gap = "6px";
+  const view = el("button", "btn ghost small", t("viewVersion"));
+  view.onclick = () => showNoticePreview(versionText);
+  const draft = el("button", "btn ghost small", t("useDraft"));
+  draft.onclick = () => {
+    $("noticeText").value = versionText;
+    $("noticeText").oninput();
+  };
+  actions.append(view, draft);
+  row.append(info, actions);
+  return row;
+}
+
+function showNoticePreview(text) {
+  $("noticePreview").textContent = text;
+  $("noticePreview").classList.remove("hidden");
+  $("previewActions").classList.remove("hidden");
+}
+
+function hideNoticePreview() {
+  $("noticePreview").classList.add("hidden");
+  $("previewActions").classList.add("hidden");
+}
+
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  document.title = t("appTitle");
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+    node.placeholder = t(node.dataset.i18nPlaceholder);
+  });
+  $("language").value = lang;
+  renderAccounts();
+  renderAttachments();
+  renderSearchResults();
+  renderItemList();
+  renderNoticeHistory();
+  if (!catalog.length) $("itemTotal").textContent = t("itemsHint");
+}
+
+function setLanguage(value) {
+  lang = STRINGS[value] ? value : "es";
+  storageSet(localStorage, LANG_KEY, lang);
+  applyLanguage();
+}
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.onclick = () => showTab(tab.dataset.tab);
+});
+
+document.querySelectorAll("[data-preset]").forEach((button) => {
+  button.onclick = () => {
+    const preset = PRESETS[button.dataset.preset];
+    addAttachment(preset.item, preset.num);
+  };
+});
+
+$("itemSearch").oninput = renderSearchResults;
+$("itemSearch").onkeydown = (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  const query = $("itemSearch").value.trim();
+  if (/^\d+$/.test(query)) return pickFromSearch(query);
+  if (lastResults.length) pickFromSearch(lastResults[0].id);
+};
+$("itemFilter").oninput = () => { listLimit = LIST_PAGE; renderItemList(); };
+$("moreItems").onclick = () => { listLimit += LIST_PAGE; renderItemList(); };
+$("recipients").onchange = () => $("recipientIds").classList.toggle("hidden", $("recipients").value !== "ids");
+$("mailBody").oninput = () => { $("bodyCount").textContent = $("mailBody").value.length + " / 2000"; };
+$("noticeText").oninput = () => { $("noticeCount").textContent = $("noticeText").value.length + " / 8000"; };
+$("closePreview").onclick = hideNoticePreview;
+$("language").onchange = () => setLanguage($("language").value);
+$("forgetToken").onclick = forgetToken;
+$("rememberToken").onchange = () => {
+  const token = currentToken();
+  if (token) saveToken(token);
+  else storageSet(localStorage, REMEMBER_KEY, $("rememberToken").checked ? "1" : "0");
+};
+
+$("saveToken").onclick = () => {
+  saveToken(currentToken());
+  iconCache.clear();
+  loadStatus();
+  loadNotice();
+  loadCatalog();
+  showMsg($("settingsMsg"), t("tokenSaved"), true);
+};
+
+let accountCount = null;
+
+function renderAccounts() {
+  $("accounts").textContent = accountCount === null ? t("accountsUnknown") : t("accounts", accountCount);
+}
+
+async function loadStatus() {
+  try {
+    const status = await api("/admin/api/status");
+    accountCount = status.accounts;
+  } catch (e) {
+    accountCount = null;
+  }
+  renderAccounts();
+}
+
+async function loadNotice() {
+  try {
+    const data = await api("/admin/api/notice/history");
+    noticeVersions = { current: data.current, history: data.history };
+    if (!$("tab-history").classList.contains("hidden")) renderNoticeHistoryTab();
+    $("noticeText").value = data.current;
+    $("noticeText").oninput();
+    renderNoticeHistory();
+  } catch (e) {
+    showMsg($("noticeMsg"), t("noticeLoadError", e.message), false);
+  }
+}
+
+$("sendMail").onclick = async () => {
+  const body = {
+    title: $("mailTitle").value.trim(),
+    body: $("mailBody").value,
+    from: $("mailFrom").value.trim(),
+    recipients: recipientsValue(),
+    attachments: attachments.filter((a) => a.item !== ""),
+  };
+  const msg = $("mailMsg");
+  if (body.recipients === "") return showMsg(msg, t("recipientNeeded"), false);
+  $("sendMail").disabled = true;
+  try {
+    const result = await api("/admin/api/mail", { method: "POST", body: JSON.stringify(body) });
+    showMsg(msg, t("mailSent", result.mail_id, result.copies, result.attachments.length), true);
+  } catch (e) {
+    showMsg(msg, t("mailNotSent", e.message), false);
+  } finally {
+    $("sendMail").disabled = false;
+  }
+};
+
+$("saveNotice").onclick = async () => {
+  try {
+    const result = await api("/admin/api/notice", { method: "POST", body: JSON.stringify({ text: $("noticeText").value }) });
+    showMsg($("noticeMsg"), t("noticeSaved", result.chars), true);
+    await loadNotice();
+  } catch (e) {
+    showMsg($("noticeMsg"), t("noticeNotSaved", e.message), false);
+  }
+};
+$("reloadNotice").onclick = loadNotice;
+
+// Start: language and token come from this browser, with the default Spanish UI.
+lang = STRINGS[storageGet(localStorage, LANG_KEY)] ? storageGet(localStorage, LANG_KEY) : "es";
+$("token").value = loadSavedToken();
+$("rememberToken").checked = rememberEnabled();
+applyLanguage();
+addAttachment(PRESETS.gold.item, PRESETS.gold.num);
+loadStatus();
+loadNotice();
+loadCatalog();
+</script>
+</body>
+</html>
