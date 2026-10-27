@@ -41,25 +41,6 @@
 !/project/backend_local/data/
 /project/backend_local/data/*
 !/project/backend_local/data/README.md
-# Static catalogs the server reads at runtime. Icons (item_icons/) and player or chat state stay ignored.
-!/project/backend_local/data/ITEMS_LIST.txt
-!/project/backend_local/data/TASK_CONDITIONS.md
-!/project/backend_local/data/item_catalog.json
-!/project/backend_local/data/box_catalog.json
-!/project/backend_local/data/skin_catalog.json
-!/project/backend_local/data/local_free_purchase_catalog.json
-!/project/backend_local/data/chapter_pve_catalog.json
-!/project/backend_local/data/guaji_pve_catalog.json
-!/project/backend_local/data/item_upgrade_catalog.json
-!/project/backend_local/data/level_progression_catalog.json
-!/project/backend_local/data/level_up_exchanges.json
-!/project/backend_local/data/lottery_catalog.json
-!/project/backend_local/data/order_exchange_catalog.json
-!/project/backend_local/data/part_item_catalog.json
-!/project/backend_local/data/roguelike_event_type_catalog.json
-!/project/backend_local/data/roguelike_export_items.json
-!/project/backend_local/data/roguelike_shop_prices.json
-!/project/backend_local/data/task_data_catalog.json
 !/project/backend_local/experiments/
 /project/backend_local/experiments/*
 !/project/backend_local/experiments/area-list-localhost.base64
