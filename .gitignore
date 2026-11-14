@@ -32,12 +32,15 @@
 !/project/backend_local/skins.py
 !/project/backend_local/cosmetics.py
 !/project/backend_local/task_periods.py
+!/project/backend_local/item_registry.py
+!/project/backend_local/admin_locales.py
 !/project/backend_local/admin/
 !/project/backend_local/tools/
 /project/backend_local/tools/*
 !/project/backend_local/tools/analyze_lebian_stream.py
 !/project/backend_local/tools/download_streamed_resources.py
 !/project/backend_local/tools/build_item_catalog.py
+!/project/backend_local/tools/classify_items.py
 !/project/backend_local/data/
 /project/backend_local/data/*
 !/project/backend_local/data/README.md

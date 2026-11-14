@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spiral Warrior · Admin local</title>
+<title>Spiral Warrior · Local admin</title>
 <style>
   :root {
     --bg: #15121f; --panel: #201b2f; --line: #3a3150; --text: #f3efff; --muted: #a79ec0;
@@ -58,7 +58,7 @@
           display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 18px; flex: none; }
   .icon img { width: 100%; height: 100%; object-fit: contain; }
   .name { font-weight: 600; overflow-wrap: anywhere; }
-  .meta { color: var(--muted); font-size: 13px; }
+  .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 
   .results { border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; max-height: 300px; overflow-y: auto; }
   .results:empty { display: none; }
@@ -70,6 +70,11 @@
   .history-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
                  padding: 8px 0; border-bottom: 1px solid var(--line); }
   .history-row:last-child { border-bottom: 0; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tr-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start;
+            padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .tr-row:last-child { border-bottom: 0; }
+  .tr-row textarea { min-height: 60px; }
   .preview { white-space: pre-wrap; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px;
              padding: 10px; margin-top: 12px; }
 
@@ -78,122 +83,155 @@
     .att { grid-template-columns: 40px 1fr 84px 36px; gap: 8px; }
     .att .icon, .item-line .icon { width: 40px; height: 40px; }
     .item-line { grid-template-columns: 40px 1fr auto; gap: 8px; }
+    .form-row, .tr-row { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1 data-i18n="appTitle">Spiral Warrior · Admin local</h1>
+  <h1 data-i18n="appTitle">Spiral Warrior · Local admin</h1>
   <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-    <input id="token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Token de admin" autocomplete="off" style="width:220px;">
-    <button class="btn ghost small" id="saveToken" data-i18n="save">Guardar</button>
+    <input id="token" type="password" data-i18n-placeholder="tokenPlaceholder" placeholder="Admin token" autocomplete="off" style="width:220px;">
+    <button class="btn ghost small" id="saveToken" data-i18n="save">Save</button>
     <span class="pill" id="accounts"></span>
   </div>
 </header>
 
 <main>
   <div class="tabs" role="tablist">
-    <button class="tab" role="tab" aria-selected="true" data-tab="mail" data-i18n="tabMail">Enviar correo</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="items" data-i18n="tabItems">Lista de objetos</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="notice" data-i18n="tabNotice">Tablón de anuncios</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="history" data-i18n="tabHistory">Historial</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="settings" data-i18n="tabSettings">Ajustes</button>
+    <button class="tab" role="tab" aria-selected="true" data-tab="mail" data-i18n="tabMail">Send mail</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="items" data-i18n="tabItems">Item list</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="notice" data-i18n="tabNotice">Notice board</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="history" data-i18n="tabHistory">History</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="settings" data-i18n="tabSettings">Settings</button>
   </div>
 
   <section id="tab-mail" class="panel">
-    <h2 data-i18n="mailHeading">Correo con objetos</h2>
-    <p class="hint" data-i18n="mailHint">Los objetos se entregan al reclamar el correo en el juego. Busca por nombre o por ID y ajusta la cantidad.</p>
+    <h2 data-i18n="mailHeading">Mail with items</h2>
+    <p class="hint" data-i18n="mailHint">Items are delivered when the player claims the mail in the game. Search by name or ID and adjust the quantity.</p>
 
-    <label for="mailTitle" data-i18n="mailTitleLabel">Título (máx. 60)</label>
-    <input id="mailTitle" maxlength="60" data-i18n-placeholder="mailTitlePh" placeholder="Compensación por mantenimiento">
+    <label for="mailTitle" data-i18n="mailTitleLabel">Title (max. 60)</label>
+    <input id="mailTitle" maxlength="60" data-i18n-placeholder="mailTitlePh" placeholder="Maintenance compensation">
 
-    <label for="mailBody" data-i18n="mailBodyLabel">Mensaje (máx. 2000)</label>
-    <textarea id="mailBody" maxlength="2000" data-i18n-placeholder="mailBodyPh" placeholder="Escribe el mensaje que verá el jugador"></textarea>
+    <label for="mailBody" data-i18n="mailBodyLabel">Message (max. 2000)</label>
+    <textarea id="mailBody" maxlength="2000" data-i18n-placeholder="mailBodyPh" placeholder="Write the message the player will see"></textarea>
     <div class="counter" id="bodyCount">0 / 2000</div>
 
-    <label for="mailFrom" data-i18n="mailFromLabel">Remitente (máx. 24)</label>
+    <label for="mailFrom" data-i18n="mailFromLabel">Sender (max. 24)</label>
     <input id="mailFrom" maxlength="24" value="Spiral Warrior Team">
 
-    <label for="recipients" data-i18n="recipientsLabel">Destinatarios</label>
+    <label for="recipients" data-i18n="recipientsLabel">Recipients</label>
     <select id="recipients">
-      <option value="all" data-i18n="optAll">Todos los jugadores</option>
-      <option value="ids" data-i18n="optIds">IDs de jugador concretos</option>
+      <option value="all" data-i18n="optAll">All players</option>
+      <option value="ids" data-i18n="optIds">Specific player IDs</option>
     </select>
-    <input id="recipientIds" class="hidden" data-i18n-placeholder="recipientIdsPh" placeholder="Ej: 100000004, 100000005" style="margin-top:8px;">
+    <input id="recipientIds" class="hidden" data-i18n-placeholder="recipientIdsPh" placeholder="E.g. 100000004, 100000005" style="margin-top:8px;">
 
-    <label for="itemSearch" data-i18n="itemSearchLabel">Añadir objeto (nombre o ID)</label>
-    <input id="itemSearch" type="search" data-i18n-placeholder="itemSearchPh" placeholder="Ej: Gold, Gem o 1227894833" autocomplete="off">
+    <label for="itemSearch" data-i18n="itemSearchLabel">Add item (name or ID)</label>
+    <input id="itemSearch" type="search" data-i18n-placeholder="itemSearchPh" placeholder="E.g. Gold, Gem or 1227894833" autocomplete="off">
     <div class="results" id="itemResults"></div>
 
-    <label><span data-i18n="attachmentsLabel">Objetos adjuntos</span> <span class="pill" id="attCount">0 / 10</span></label>
+    <label><span data-i18n="attachmentsLabel">Attached items</span> <span class="pill" id="attCount">0 / 10</span></label>
     <div id="attachments"></div>
     <div class="presets">
-      <button class="btn ghost small" data-preset="gold" data-i18n="presetGold">+ Oro</button>
-      <button class="btn ghost small" data-preset="diamond" data-i18n="presetDiamond">+ Diamantes</button>
-      <button class="btn ghost small" data-preset="ticket" data-i18n="presetTicket">+ Ticket de gacha</button>
+      <button class="btn ghost small" data-preset="gold" data-i18n="presetGold">+ Gold</button>
+      <button class="btn ghost small" data-preset="diamond" data-i18n="presetDiamond">+ Diamonds</button>
+      <button class="btn ghost small" data-preset="ticket" data-i18n="presetTicket">+ Gacha ticket</button>
     </div>
 
     <div class="actions">
-      <button class="btn" id="sendMail" data-i18n="sendMail">Enviar correo</button>
+      <button class="btn" id="sendMail" data-i18n="sendMail">Send mail</button>
     </div>
     <div class="msg" id="mailMsg"></div>
   </section>
 
   <section id="tab-items" class="panel hidden">
-    <h2 data-i18n="tabItems">Lista de objetos</h2>
-    <p class="hint" id="itemTotal" data-i18n="itemsHint">Carga el catálogo con el token de admin.</p>
+    <h2 data-i18n="tabItems">Item list</h2>
+    <p class="hint" id="itemTotal" data-i18n="itemsHint">Load the catalog with the admin token.</p>
     <div style="display:grid; gap:8px;">
-      <input id="itemFilter" type="search" data-i18n-placeholder="itemFilterPh" placeholder="Filtrar por nombre o ID" autocomplete="off">
+      <input id="itemFilter" type="search" data-i18n-placeholder="itemFilterPh" placeholder="Filter by name or ID" autocomplete="off">
       <div class="hint" id="itemCount"></div>
     </div>
     <div id="itemList" style="margin-top:8px;"></div>
     <div class="actions">
-      <button class="btn ghost" id="moreItems" data-i18n="showMore">Mostrar más</button>
+      <button class="btn ghost" id="moreItems" data-i18n="showMore">Show more</button>
     </div>
   </section>
 
   <section id="tab-notice" class="panel hidden">
-    <h2 data-i18n="tabNotice">Tablón de anuncios</h2>
-    <p class="hint" data-i18n="noticeHint">Es el texto que ven los jugadores al abrir el anuncio. Texto plano, máx. 8000 caracteres.</p>
+    <h2 data-i18n="noticeHeading">Notice board</h2>
+    <p class="hint" data-i18n="noticeHint">This is the text players see when they open the notice. Plain text, max. 8000 characters.</p>
     <textarea id="noticeText" maxlength="8000" style="min-height:260px;"></textarea>
     <div class="counter" id="noticeCount">0 / 8000</div>
     <div class="actions">
-      <button class="btn" id="saveNotice" data-i18n="saveNotice">Guardar tablón</button>
-      <button class="btn ghost" id="reloadNotice" data-i18n="reloadNotice">Recargar</button>
+      <button class="btn" id="saveNotice" data-i18n="saveNotice">Save notice</button>
+      <button class="btn ghost" id="reloadNotice" data-i18n="reloadNotice">Reload</button>
     </div>
     <div class="msg" id="noticeMsg"></div>
 
-    <h3 data-i18n="historyHeading">Versiones del tablón</h3>
+    <h3 data-i18n="historyHeading">Notice versions</h3>
     <div id="noticeHistory"></div>
     <div class="preview hidden" id="noticePreview"></div>
     <div class="actions hidden" id="previewActions">
-      <button class="btn ghost small" id="closePreview" data-i18n="closePreview">Cerrar</button>
+      <button class="btn ghost small" id="closePreview" data-i18n="closePreview">Close</button>
     </div>
   </section>
 
   <section id="tab-history" class="panel hidden">
-    <h2 data-i18n="historyTabHeading">Historial</h2>
-    <h3 data-i18n="mailHistoryHeading">Correos enviados</h3>
+    <h2 data-i18n="historyTabHeading">History</h2>
+    <h3 data-i18n="mailHistoryHeading">Mail sent</h3>
     <div id="mailHistory"></div>
-    <h3 data-i18n="noticeHistoryHeading">Anuncios anteriores</h3>
+    <h3 data-i18n="noticeHistoryHeading">Previous notices</h3>
     <div id="noticeHistoryList"></div>
   </section>
 
   <section id="tab-settings" class="panel hidden">
-    <h2 data-i18n="settingsHeading">Ajustes</h2>
+    <h2 data-i18n="settingsHeading">Settings</h2>
 
-    <label for="language" data-i18n="langLabel">Idioma</label>
-    <select id="language">
-      <option value="es">Español</option>
-      <option value="en">English</option>
-    </select>
+    <h3 data-i18n="languageHeading">Interface language</h3>
+    <label for="language" data-i18n="langLabel">Language</label>
+    <select id="language"></select>
+    <p class="hint" data-i18n="langHint">This choice applies only to this browser.</p>
 
+    <h3 data-i18n="manageLangsHeading">Languages</h3>
+    <p class="hint" data-i18n="manageLangsHint">English is the base language and Español is built in. Languages you add are stored on the server and shared by everyone who uses this admin page.</p>
+    <div id="langList"></div>
+
+    <h3 data-i18n="addLangHeading">Add a language</h3>
+    <div class="form-row">
+      <div>
+        <label for="newLangCode" data-i18n="newLangCodeLabel">Code (e.g. fr or pt-BR)</label>
+        <input id="newLangCode" maxlength="12" autocomplete="off" placeholder="fr">
+      </div>
+      <div>
+        <label for="newLangName" data-i18n="newLangNameLabel">Name in that language (max. 40)</label>
+        <input id="newLangName" maxlength="40" autocomplete="off" placeholder="Français">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="addLang" data-i18n="addLang">Add language</button>
+    </div>
+    <div class="msg" id="langMsg"></div>
+
+    <div id="translatorPanel" class="hidden" style="margin-top:16px;">
+      <h3 id="translatorHeading"></h3>
+      <p class="hint" data-i18n="translatorHint">The English text is shown on the left. Empty fields show English. Keep placeholders such as {0} unchanged.</p>
+      <div id="translatorRows"></div>
+      <div class="actions">
+        <button class="btn" id="saveLang" data-i18n="saveLang">Save translations</button>
+        <button class="btn ghost" id="closeLang" data-i18n="closeLang">Close</button>
+        <button class="btn remove" id="deleteLang" data-i18n="deleteLang">Delete language</button>
+      </div>
+      <div class="msg" id="translatorMsg"></div>
+    </div>
+
+    <h3 data-i18n="tokenHeading">Admin token</h3>
     <label class="check"><input id="rememberToken" type="checkbox" checked>
-      <span data-i18n="rememberToken">Recordar el token en este navegador</span></label>
-    <p class="hint" data-i18n="rememberHint">Se guarda solo en este navegador. Desmarcarlo lo deja solo mientras la pestaña esté abierta.</p>
+      <span data-i18n="rememberToken">Remember the token in this browser</span></label>
+    <p class="hint" data-i18n="rememberHint">It is stored only in this browser. Unchecking it keeps the token only while the tab is open.</p>
 
     <div class="actions">
-      <button class="btn ghost" id="forgetToken" data-i18n="forgetToken">Olvidar token</button>
+      <button class="btn ghost" id="forgetToken" data-i18n="forgetToken">Forget token</button>
     </div>
     <div class="msg" id="settingsMsg"></div>
   </section>
@@ -210,87 +248,13 @@ const LIST_PAGE = 100;
 const RESULT_LIMIT = 12;
 const TOKEN_KEY = "spiralAdminToken";
 const REMEMBER_KEY = "spiralAdminRemember";
-const LANG_KEY = "spiralAdminLang";
+// Versioned key: browsers that saved the old Spanish default start again in English.
+const LANG_KEY = "spiralAdminLang.v2";
+const DEFAULT_LANG = "en";
+const BUILTIN_LANGS = { en: "English", es: "Español" };
+const LANG_CODE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
 
 const STRINGS = {
-  es: {
-    appTitle: "Spiral Warrior · Admin local",
-    tokenPlaceholder: "Token de admin",
-    save: "Guardar",
-    accounts: "cuentas: {0}",
-    accountsUnknown: "cuentas: —",
-    tabMail: "Enviar correo",
-    tabItems: "Lista de objetos",
-    tabNotice: "Tablón de anuncios",
-    tabSettings: "Ajustes",
-    tabHistory: "Historial",
-    historyTabHeading: "Historial",
-    mailHistoryHeading: "Correos enviados",
-    noticeHistoryHeading: "Anuncios anteriores",
-    mailHistoryEmpty: "Todavía no se ha enviado ningún correo desde este panel.",
-    mailRecipientsAll: "Todos los jugadores",
-    mailRecipientsCount: "{0} jugador(es)",
-    mailCopies: "{0} copia(s)",
-    mailNoAttachments: "Sin adjuntos",
-    noticeViewInTab: "Ver",
-    mailHeading: "Correo con objetos",
-    mailHint: "Los objetos se entregan al reclamar el correo en el juego. Busca por nombre o por ID y ajusta la cantidad.",
-    mailTitleLabel: "Título (máx. 60)",
-    mailTitlePh: "Compensación por mantenimiento",
-    mailBodyLabel: "Mensaje (máx. 2000)",
-    mailBodyPh: "Escribe el mensaje que verá el jugador",
-    mailFromLabel: "Remitente (máx. 24)",
-    recipientsLabel: "Destinatarios",
-    optAll: "Todos los jugadores",
-    optIds: "IDs de jugador concretos",
-    recipientIdsPh: "Ej: 100000004, 100000005",
-    itemSearchLabel: "Añadir objeto (nombre o ID)",
-    itemSearchPh: "Ej: Gold, Gem o 1227894833",
-    attachmentsLabel: "Objetos adjuntos",
-    presetGold: "+ Oro",
-    presetDiamond: "+ Diamantes",
-    presetTicket: "+ Ticket de gacha",
-    sendMail: "Enviar correo",
-    noResults: "Sin resultados. Si conoces el ID, escríbelo y pulsa Enter.",
-    add: "Añadir",
-    addToMail: "Usar en correo",
-    removeTitle: "Quitar",
-    qtyTitle: "Cantidad",
-    unknownId: "ID desconocido",
-    noIconTitle: "Sin icono en el catálogo",
-    noName: "Sin nombre",
-    itemsHint: "Carga el catálogo con el token de admin.",
-    itemsTotal: "{0} objetos en el catálogo.",
-    itemsShowing: "Mostrando {0} de {1} objetos",
-    itemFilterPh: "Filtrar por nombre o ID",
-    showMore: "Mostrar más",
-    catalogError: "No se cargó el catálogo de objetos: {0}",
-    maxAttachments: "Máximo {0} objetos por correo.",
-    recipientNeeded: "Escribe al menos un ID de jugador.",
-    mailSent: "Correo {0} enviado a {1} cuenta(s), con {2} adjunto(s).",
-    mailNotSent: "No se envió: {0}",
-    noticeHeading: "Tablón de anuncios",
-    noticeHint: "Es el texto que ven los jugadores al abrir el anuncio. Texto plano, máx. 8000 caracteres.",
-    saveNotice: "Guardar tablón",
-    reloadNotice: "Recargar",
-    noticeSaved: "Tablón guardado ({0} caracteres).",
-    noticeNotSaved: "No se guardó: {0}",
-    noticeLoadError: "No se pudo cargar: {0}",
-    historyHeading: "Versiones del tablón",
-    currentVersion: "Actual",
-    replacedAt: "Reemplazada el {0}",
-    historyEmpty: "Todavía no hay versiones anteriores.",
-    viewVersion: "Ver",
-    useDraft: "Usar como borrador",
-    closePreview: "Cerrar",
-    settingsHeading: "Ajustes",
-    langLabel: "Idioma",
-    rememberToken: "Recordar el token en este navegador",
-    rememberHint: "Se guarda solo en este navegador. Desmarcarlo lo deja solo mientras la pestaña esté abierta.",
-    forgetToken: "Olvidar token",
-    tokenForgotten: "Token eliminado de este navegador.",
-    tokenSaved: "Token guardado.",
-  },
   en: {
     appTitle: "Spiral Warrior · Local admin",
     tokenPlaceholder: "Admin token",
@@ -362,28 +326,167 @@ const STRINGS = {
     useDraft: "Use as draft",
     closePreview: "Close",
     settingsHeading: "Settings",
+    languageHeading: "Interface language",
     langLabel: "Language",
+    langHint: "This choice applies only to this browser.",
+    manageLangsHeading: "Languages",
+    manageLangsHint: "English is the base language and Español is built in. Languages you add are stored on the server and shared by everyone who uses this admin page.",
+    langBuiltin: "Built in",
+    langTranslated: "{0} of {1} texts translated",
+    langNone: "No languages added yet.",
+    translateLang: "Translate",
+    addLangHeading: "Add a language",
+    newLangCodeLabel: "Code (e.g. fr or pt-BR)",
+    newLangNameLabel: "Name in that language (max. 40)",
+    addLang: "Add language",
+    langCodeInvalid: "Use 2 or 3 lowercase letters, optionally followed by a region such as -BR.",
+    langNameNeeded: "Write the language name.",
+    langAdded: "Language {0} added. Translate its texts below.",
+    langNotAdded: "Not added: {0}",
+    langLoadError: "Could not load the language: {0}",
+    translatorHeading: "Translate: {0} ({1})",
+    translatorHint: "The English text is shown on the left. Empty fields show English. Keep placeholders such as {0} unchanged.",
+    saveLang: "Save translations",
+    closeLang: "Close",
+    deleteLang: "Delete language",
+    deleteLangConfirm: "Delete the language {0}? Its translations will be removed from the server.",
+    langDeleted: "Language {0} deleted.",
+    langSaved: "Translations saved ({0} texts translated).",
+    langNotSaved: "Not saved: {0}",
+    tokenHeading: "Admin token",
     rememberToken: "Remember the token in this browser",
     rememberHint: "It is stored only in this browser. Unchecking it keeps the token only while the tab is open.",
     forgetToken: "Forget token",
     tokenForgotten: "Token removed from this browser.",
     tokenSaved: "Token saved.",
   },
+  es: {
+    appTitle: "Spiral Warrior · Admin local",
+    tokenPlaceholder: "Token de admin",
+    save: "Guardar",
+    accounts: "cuentas: {0}",
+    accountsUnknown: "cuentas: —",
+    tabMail: "Enviar correo",
+    tabItems: "Lista de objetos",
+    tabNotice: "Tablón de anuncios",
+    tabSettings: "Ajustes",
+    tabHistory: "Historial",
+    historyTabHeading: "Historial",
+    mailHistoryHeading: "Correos enviados",
+    noticeHistoryHeading: "Anuncios anteriores",
+    mailHistoryEmpty: "Todavía no se ha enviado ningún correo desde este panel.",
+    mailRecipientsAll: "Todos los jugadores",
+    mailRecipientsCount: "{0} jugador(es)",
+    mailCopies: "{0} copia(s)",
+    mailNoAttachments: "Sin adjuntos",
+    noticeViewInTab: "Ver",
+    mailHeading: "Correo con objetos",
+    mailHint: "Los objetos se entregan al reclamar el correo en el juego. Busca por nombre o por ID y ajusta la cantidad.",
+    mailTitleLabel: "Título (máx. 60)",
+    mailTitlePh: "Compensación por mantenimiento",
+    mailBodyLabel: "Mensaje (máx. 2000)",
+    mailBodyPh: "Escribe el mensaje que verá el jugador",
+    mailFromLabel: "Remitente (máx. 24)",
+    recipientsLabel: "Destinatarios",
+    optAll: "Todos los jugadores",
+    optIds: "IDs de jugador concretos",
+    recipientIdsPh: "Ej: 100000004, 100000005",
+    itemSearchLabel: "Añadir objeto (nombre o ID)",
+    itemSearchPh: "Ej: Gold, Gem o 1227894833",
+    attachmentsLabel: "Objetos adjuntos",
+    presetGold: "+ Oro",
+    presetDiamond: "+ Diamantes",
+    presetTicket: "+ Ticket de gacha",
+    sendMail: "Enviar correo",
+    noResults: "Sin resultados. Si conoces el ID, escríbelo y pulsa Enter.",
+    add: "Añadir",
+    addToMail: "Usar en correo",
+    removeTitle: "Quitar",
+    qtyTitle: "Cantidad",
+    unknownId: "ID desconocido",
+    noIconTitle: "Sin icono en el catálogo",
+    noName: "Sin nombre",
+    itemsHint: "Carga el catálogo con el token de admin.",
+    itemsTotal: "{0} objetos en el catálogo.",
+    itemsShowing: "Mostrando {0} de {1} objetos",
+    itemFilterPh: "Filtrar por nombre o ID",
+    showMore: "Mostrar más",
+    catalogError: "No se cargó el catálogo de objetos: {0}",
+    maxAttachments: "Máximo {0} objetos por correo.",
+    recipientNeeded: "Escribe al menos un ID de jugador.",
+    mailSent: "Correo {0} enviado a {1} cuenta(s), con {2} adjunto(s).",
+    mailNotSent: "No se envió: {0}",
+    noticeHeading: "Tablón de anuncios",
+    noticeHint: "Es el texto que ven los jugadores al abrir el anuncio. Texto plano, máx. 8000 caracteres.",
+    saveNotice: "Guardar tablón",
+    reloadNotice: "Recargar",
+    noticeSaved: "Tablón guardado ({0} caracteres).",
+    noticeNotSaved: "No se guardó: {0}",
+    noticeLoadError: "No se pudo cargar: {0}",
+    historyHeading: "Versiones del tablón",
+    currentVersion: "Actual",
+    replacedAt: "Reemplazada el {0}",
+    historyEmpty: "Todavía no hay versiones anteriores.",
+    viewVersion: "Ver",
+    useDraft: "Usar como borrador",
+    closePreview: "Cerrar",
+    settingsHeading: "Ajustes",
+    languageHeading: "Idioma de la interfaz",
+    langLabel: "Idioma",
+    langHint: "La elección de idioma se aplica solo a este navegador.",
+    manageLangsHeading: "Idiomas",
+    manageLangsHint: "El inglés es el idioma base y el español viene incluido. Los idiomas que añadas se guardan en el servidor y los usa todo el que accede a este panel.",
+    langBuiltin: "Incluido",
+    langTranslated: "{0} de {1} textos traducidos",
+    langNone: "Todavía no hay idiomas añadidos.",
+    translateLang: "Traducir",
+    addLangHeading: "Añadir un idioma",
+    newLangCodeLabel: "Código (ej. fr o pt-BR)",
+    newLangNameLabel: "Nombre en ese idioma (máx. 40)",
+    addLang: "Añadir idioma",
+    langCodeInvalid: "Usa 2 o 3 letras minúsculas, opcionalmente seguidas de una región como -BR.",
+    langNameNeeded: "Escribe el nombre del idioma.",
+    langAdded: "Idioma {0} añadido. Traduce sus textos abajo.",
+    langNotAdded: "No se añadió: {0}",
+    langLoadError: "No se pudo cargar el idioma: {0}",
+    translatorHeading: "Traducir: {0} ({1})",
+    translatorHint: "El texto en inglés está a la izquierda. Los campos vacíos muestran el inglés. Mantén sin cambios marcadores como {0}.",
+    saveLang: "Guardar traducciones",
+    closeLang: "Cerrar",
+    deleteLang: "Eliminar idioma",
+    deleteLangConfirm: "¿Eliminar el idioma {0}? Sus traducciones se borrarán del servidor.",
+    langDeleted: "Idioma {0} eliminado.",
+    langSaved: "Traducciones guardadas ({0} textos traducidos).",
+    langNotSaved: "No se guardó: {0}",
+    tokenHeading: "Token de admin",
+    rememberToken: "Recordar el token en este navegador",
+    rememberHint: "Se guarda solo en este navegador. Desmarcarlo lo deja solo mientras la pestaña esté abierta.",
+    forgetToken: "Olvidar token",
+    tokenForgotten: "Token eliminado de este navegador.",
+    tokenSaved: "Token guardado.",
+  },
 };
 
 const $ = (id) => document.getElementById(id);
-let lang = "es";
+let lang = DEFAULT_LANG;
 let catalog = [];
 let catalogById = new Map();
 let attachments = [];
 let lastResults = [];
 let listLimit = LIST_PAGE;
 let noticeVersions = { current: "", history: [] };
+let mailRows = null;
+let customLangs = [];           // added languages from the server: [{code, name, custom, translated}]
+const langDocs = new Map();     // added language code -> {code, name, strings}
+let translatorCode = null;
 const iconCache = new Map();
 
+// Text lookup: added language (if loaded) -> built-in table -> English -> the key itself.
 function t(key, ...args) {
-  const table = STRINGS[lang] || STRINGS.es;
-  const text = table[key] !== undefined ? table[key] : STRINGS.es[key] || key;
+  const doc = langDocs.get(lang);
+  let text = doc && doc.strings && doc.strings[key] ? doc.strings[key] : undefined;
+  if (text === undefined && STRINGS[lang] && STRINGS[lang][key] !== undefined) text = STRINGS[lang][key];
+  if (text === undefined) text = STRINGS.en[key] !== undefined ? STRINGS.en[key] : key;
   return text.replace(/\{(\d+)\}/g, (match, index) => (args[index] !== undefined ? String(args[index]) : match));
 }
 
@@ -440,6 +543,11 @@ function el(tag, className, text) {
 function showMsg(target, text, ok) {
   target.textContent = text;
   target.className = "msg " + (ok ? "ok" : "err");
+}
+
+function clearMsg(target) {
+  target.textContent = "";
+  target.className = "msg";
 }
 
 async function api(path, options = {}) {
@@ -505,15 +613,18 @@ function nameOf(id) {
   return item ? item.name : t("unknownId");
 }
 
+// Search by ID, name or category (for example "currency" or "skin").
 function matchesQuery(item, query) {
-  return String(item.id).includes(query) || item.name.toLowerCase().includes(query);
+  return String(item.id).includes(query)
+    || item.name.toLowerCase().includes(query)
+    || String(item.category || "").toLowerCase().includes(query);
 }
 
 // One catalog row: [icon] NAME / [ID], with an action button.
 function itemRow(item, buttonLabel, onPick) {
   const row = el("div", "item-line");
   const info = el("div");
-  info.append(el("div", "name", item.name || t("noName")), el("div", "meta", `[${item.id}]`));
+  info.append(el("div", "name", item.name || t("noName")), el("div", "meta", `[${item.id}] · ${item.category || ""}`));
   const button = el("button", "btn ghost small", buttonLabel);
   button.onclick = () => onPick(item.id);
   row.append(iconBox(item), info, button);
@@ -597,7 +708,8 @@ function useInMail(itemId) {
 async function loadMailHistory() {
   try {
     const data = await api("/admin/api/mail/history");
-    renderMailHistory(data.mails);
+    mailRows = data.mails;
+    renderMailHistory(mailRows);
   } catch (e) {
     $("mailHistory").textContent = e.message;
   }
@@ -668,9 +780,16 @@ function recipientsValue() {
   return $("recipientIds").value.trim();
 }
 
+// Browser locale tag for dates: built-in tags, otherwise the language code itself.
+function localeTag() {
+  const tags = { en: "en-US", es: "es-PR" };
+  return tags[lang] || lang;
+}
+
 function formatTime(iso) {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(lang === "en" ? "en-US" : "es-PR");
+  if (Number.isNaN(date.getTime())) return iso;
+  try { return date.toLocaleString(localeTag()); } catch (e) { return date.toLocaleString("en-US"); }
 }
 
 function renderNoticeHistory() {
@@ -717,6 +836,101 @@ function hideNoticePreview() {
   $("previewActions").classList.add("hidden");
 }
 
+// ---- Languages -------------------------------------------------------------
+
+function langName(code) {
+  if (BUILTIN_LANGS[code]) return BUILTIN_LANGS[code];
+  const row = customLangs.find((item) => item.code === code);
+  return row ? row.name : code;
+}
+
+function renderLanguageSelect() {
+  const select = $("language");
+  const codes = [...Object.keys(BUILTIN_LANGS), ...customLangs.map((row) => row.code)];
+  if (!codes.includes(lang)) codes.push(lang);   // keep an added language visible while the server is unreachable
+  select.replaceChildren();
+  codes.forEach((code) => {
+    const label = BUILTIN_LANGS[code] ? BUILTIN_LANGS[code] : `${langName(code)} (${code})`;
+    select.appendChild(el("option", "", label));
+    select.lastChild.value = code;
+  });
+  select.value = lang;
+}
+
+function renderLanguageList() {
+  const list = $("langList");
+  list.replaceChildren();
+  const total = Object.keys(STRINGS.en).length;
+  const builtinRow = (code) => {
+    const row = el("div", "history-row");
+    const info = el("div");
+    info.append(el("div", "name", `${BUILTIN_LANGS[code]} (${code})`), el("div", "meta", t("langBuiltin")));
+    row.append(info);
+    return row;
+  };
+  Object.keys(BUILTIN_LANGS).forEach((code) => list.appendChild(builtinRow(code)));
+  customLangs.forEach((row) => {
+    const line = el("div", "history-row");
+    const info = el("div");
+    info.append(el("div", "name", `${row.name} (${row.code})`), el("div", "meta", t("langTranslated", row.translated, total)));
+    const edit = el("button", "btn ghost small", t("translateLang"));
+    edit.onclick = () => openTranslator(row.code);
+    line.append(info, edit);
+    list.appendChild(line);
+  });
+  if (!customLangs.length) list.appendChild(el("div", "hint", t("langNone")));
+}
+
+async function ensureLanguageDoc(code) {
+  if (BUILTIN_LANGS[code] || langDocs.has(code)) return;
+  const doc = await api(`/admin/api/locales/${encodeURIComponent(code)}`);
+  langDocs.set(code, doc);
+}
+
+async function loadLanguageList() {
+  const data = await api("/admin/api/locales");
+  customLangs = data.locales;
+  renderLanguageSelect();
+  renderLanguageList();
+}
+
+async function ensureActiveLanguage() {
+  if (BUILTIN_LANGS[lang]) return;
+  try {
+    await ensureLanguageDoc(lang);
+    applyLanguage();
+  } catch (e) {
+    // Stays in English until the token is set and the language loads.
+  }
+}
+
+async function openTranslator(code) {
+  clearMsg($("translatorMsg"));
+  try {
+    await ensureLanguageDoc(code);
+  } catch (e) {
+    return showMsg($("langMsg"), t("langLoadError", e.message), false);
+  }
+  const doc = langDocs.get(code);
+  translatorCode = code;
+  $("translatorHeading").textContent = t("translatorHeading", doc.name, code);
+  const rows = $("translatorRows");
+  rows.replaceChildren();
+  Object.keys(STRINGS.en).forEach((key) => {
+    const row = el("div", "tr-row");
+    const source = el("div", "meta", STRINGS.en[key]);
+    const area = document.createElement("textarea");
+    area.rows = 2;
+    area.dataset.key = key;
+    area.value = doc.strings[key] || "";
+    area.placeholder = STRINGS.en[key];
+    row.append(source, area);
+    rows.appendChild(row);
+  });
+  $("translatorPanel").classList.remove("hidden");
+  $("translatorPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function applyLanguage() {
   document.documentElement.lang = lang;
   document.title = t("appTitle");
@@ -726,17 +940,26 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
     node.placeholder = t(node.dataset.i18nPlaceholder);
   });
-  $("language").value = lang;
+  renderLanguageSelect();
+  renderLanguageList();
   renderAccounts();
   renderAttachments();
   renderSearchResults();
   renderItemList();
   renderNoticeHistory();
+  if (mailRows) renderMailHistory(mailRows);
   if (!catalog.length) $("itemTotal").textContent = t("itemsHint");
 }
 
-function setLanguage(value) {
-  lang = STRINGS[value] ? value : "es";
+async function setLanguage(value) {
+  try {
+    await ensureLanguageDoc(value);
+  } catch (e) {
+    showMsg($("settingsMsg"), t("langLoadError", e.message), false);
+    $("language").value = lang;
+    return;
+  }
+  lang = value;
   storageSet(localStorage, LANG_KEY, lang);
   applyLanguage();
 }
@@ -774,13 +997,67 @@ $("rememberToken").onchange = () => {
   else storageSet(localStorage, REMEMBER_KEY, $("rememberToken").checked ? "1" : "0");
 };
 
-$("saveToken").onclick = () => {
-  saveToken(currentToken());
-  iconCache.clear();
-  loadStatus();
-  loadNotice();
-  loadCatalog();
-  showMsg($("settingsMsg"), t("tokenSaved"), true);
+$("addLang").onclick = async () => {
+  const code = $("newLangCode").value.trim();
+  const name = $("newLangName").value.trim();
+  if (!LANG_CODE_RE.test(code)) return showMsg($("langMsg"), t("langCodeInvalid"), false);
+  if (!name) return showMsg($("langMsg"), t("langNameNeeded"), false);
+  try {
+    await api("/admin/api/locales", { method: "POST", body: JSON.stringify({ code, name }) });
+    $("newLangCode").value = "";
+    $("newLangName").value = "";
+    await loadLanguageList();
+    showMsg($("langMsg"), t("langAdded", name), true);
+    await openTranslator(code);
+  } catch (e) {
+    showMsg($("langMsg"), t("langNotAdded", e.message), false);
+  }
+};
+
+$("saveLang").onclick = async () => {
+  const code = translatorCode;
+  if (!code) return;
+  const doc = langDocs.get(code);
+  const strings = {};
+  document.querySelectorAll("#translatorRows textarea").forEach((area) => {
+    const value = area.value.trim();
+    if (value) strings[area.dataset.key] = value;
+  });
+  try {
+    const result = await api(`/admin/api/locales/${encodeURIComponent(code)}`, {
+      method: "POST",
+      body: JSON.stringify({ name: doc.name, strings }),
+    });
+    doc.strings = strings;
+    await loadLanguageList();
+    showMsg($("translatorMsg"), t("langSaved", result.translated), true);
+    if (lang === code) applyLanguage();
+  } catch (e) {
+    showMsg($("translatorMsg"), t("langNotSaved", e.message), false);
+  }
+};
+
+$("closeLang").onclick = () => {
+  translatorCode = null;
+  $("translatorPanel").classList.add("hidden");
+};
+
+$("deleteLang").onclick = async () => {
+  const code = translatorCode;
+  if (!code) return;
+  const name = langName(code);
+  if (!window.confirm(t("deleteLangConfirm", name))) return;
+  try {
+    await api(`/admin/api/locales/${encodeURIComponent(code)}/delete`, { method: "POST", body: "{}" });
+    langDocs.delete(code);
+    translatorCode = null;
+    $("translatorPanel").classList.add("hidden");
+    await loadLanguageList();
+    if (lang === code) await setLanguage(DEFAULT_LANG);
+    showMsg($("langMsg"), t("langDeleted", name), true);
+  } catch (e) {
+    showMsg($("langMsg"), t("langNotSaved", e.message), false);
+  }
 };
 
 let accountCount = null;
@@ -844,8 +1121,18 @@ $("saveNotice").onclick = async () => {
 };
 $("reloadNotice").onclick = loadNotice;
 
-// Start: language and token come from this browser, with the default Spanish UI.
-lang = STRINGS[storageGet(localStorage, LANG_KEY)] ? storageGet(localStorage, LANG_KEY) : "es";
+$("saveToken").onclick = () => {
+  saveToken(currentToken());
+  iconCache.clear();
+  loadStatus();
+  loadNotice();
+  loadCatalog();
+  loadLanguageList().then(ensureActiveLanguage).catch(() => {});
+  showMsg($("settingsMsg"), t("tokenSaved"), true);
+};
+
+// Start: language and token come from this browser; the default UI is English.
+lang = storageGet(localStorage, LANG_KEY) || DEFAULT_LANG;
 $("token").value = loadSavedToken();
 $("rememberToken").checked = rememberEnabled();
 applyLanguage();
@@ -853,6 +1140,7 @@ addAttachment(PRESETS.gold.item, PRESETS.gold.num);
 loadStatus();
 loadNotice();
 loadCatalog();
+loadLanguageList().then(ensureActiveLanguage).catch(() => {});
 </script>
 </body>
 </html>

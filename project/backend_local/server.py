@@ -25,7 +25,9 @@ from account_store import AccountError, AccountStore
 import club_store
 import friend_store
 import hmac
+import admin_locales
 import admin_mail
+import item_registry
 import item_catalog
 from mail_fixture import DEFAULT_STATE_FILE, MAIL_STATE_READ, MAIL_STATE_RECEIVED, update_mail_state, visible_mails
 
@@ -285,8 +287,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/admin/api/items" and method in ("GET", "HEAD"):
             if not self._admin_ready(send_body):
                 return
-            rows = [{"id": row["id"], "name": row["name"], "type": row["type"], "icon": bool(row.get("icon"))}
-                    for row in item_catalog.load_items()]
+            rows = [{"id": entry["id"], "name": entry["name"], "type": entry["type"], "type_name": entry["type_name"],
+                     "category": entry["category"], "destination": entry["destination"], "icon": entry["icon"]}
+                    for entry in item_registry.registry().values()]
             self._admin_json(200, {"count": len(rows), "items": rows}, send_body=send_body)
             return
         if path.startswith("/admin/api/items/") and path.endswith("/icon") and method in ("GET", "HEAD"):
@@ -311,6 +314,22 @@ class Handler(BaseHTTPRequestHandler):
             self._admin_json(200, {"current": admin_mail.read_notice(self.app.notice_file),
                                    "history": admin_mail.read_notice_history(self.app.notice_file)},
                              send_body=send_body)
+            return
+        if path == "/admin/api/locales" and method in ("GET", "HEAD"):
+            if not self._admin_ready(send_body):
+                return
+            self._admin_json(200, {"builtin": [{"code": code, "name": name}
+                                               for code, name in admin_locales.BUILTIN_LOCALES.items()],
+                                   "locales": admin_locales.list_locales()}, send_body=send_body)
+            return
+        if path.startswith("/admin/api/locales/") and method in ("GET", "HEAD"):
+            if not self._admin_ready(send_body):
+                return
+            doc = admin_locales.read_locale(path[len("/admin/api/locales/"):])
+            if doc is None:
+                self._admin_json(404, {"error": "locale_not_found"}, send_body=send_body)
+                return
+            self._admin_json(200, doc, send_body=send_body)
             return
         self._admin_json(404, {"error": "not_found"}, send_body=send_body)
 
@@ -345,7 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if store is None:
                     raise admin_mail.AdminInputError("accounts are disabled on this server")
-                attachments = admin_mail.validate_attachments(payload.get("attachments"))
+                attachments = admin_mail.validate_attachments(payload.get("attachments"),
+                                                              known_ids=item_registry.known_ids())
                 mail = admin_mail.build_mail(str(payload.get("title", "")), str(payload.get("body", "")),
                                              str(payload.get("from", "")), attachments)
                 recipients = payload.get("recipients", "all")
@@ -375,6 +395,28 @@ class Handler(BaseHTTPRequestHandler):
             })
             self._admin_json(200, {"ok": True, "copies": copies, "mail_id": mail["id"],
                                    "attachments": attachments})
+            return
+        if path == "/admin/api/locales":
+            try:
+                row = admin_locales.create_locale(payload.get("code"), payload.get("name"))
+            except admin_locales.LocaleError as exc:
+                self._admin_json(400, {"error": "invalid_locale", "message": str(exc)})
+                return
+            self._admin_json(200, {"ok": True, **row})
+            return
+        if path.startswith("/admin/api/locales/"):
+            rest = path[len("/admin/api/locales/"):]
+            try:
+                if rest.endswith("/delete"):
+                    admin_locales.delete_locale(rest[:-len("/delete")])
+                    self._admin_json(200, {"ok": True})
+                else:
+                    result = admin_locales.save_locale(rest, payload.get("name"), payload.get("strings"))
+                    self._admin_json(200, {"ok": True, **result})
+            except admin_locales.LocaleNotFound as exc:
+                self._admin_json(404, {"error": "locale_not_found", "message": str(exc)})
+            except admin_locales.LocaleError as exc:
+                self._admin_json(400, {"error": "invalid_locale", "message": str(exc)})
             return
         self._admin_json(404, {"error": "not_found"})
 

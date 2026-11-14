@@ -31,6 +31,7 @@ from chat_history import HISTORY as CHAT_HISTORY
 import outgoing_trace
 from admin_mail import claim_mail
 import save_boxes as save_box
+import item_registry
 import task_periods as task_period
 import cosmetics as cosmetic
 import skins as part_skin
@@ -3069,6 +3070,16 @@ def grant_mail_reward(app, item_id: int, quantity: int) -> None:
 
 
 def credit_profile_item_reward(app, item_id: int, quantity: int) -> str:
+    quantity = max(0, int(quantity))
+    destination = item_registry.destination_for(item_id)
+    # Task and achievement points are scalar profile counters that the client reads (BaseInfo),
+    # not inventory entries, so a grant must update those counters.
+    if destination == "task_score":
+        app.task_score = int(getattr(app, "task_score", 0)) + quantity
+        return "task_score"
+    if destination == "achievement_score":
+        app.achievement_total_score = int(getattr(app, "achievement_total_score", 0)) + quantity
+        return "achievement_score"
     fragments = getattr(app, "part_fragments", {})
     app.part_fragments = fragments
     return credit_item_reward(app.inventory_items, fragments, item_id, quantity)

@@ -39,13 +39,16 @@ def game_time_seconds(now: float | None = None) -> int:
     return int((time.time() if now is None else now) - GAME_TIME_EPOCH_SECONDS)
 
 
-def validate_attachments(raw: object) -> list[dict[str, object]]:
+def validate_attachments(raw: object, known_ids: set[int] | None = None) -> list[dict[str, object]]:
+    """known_ids: item ids the server recognizes (the item catalog); unknown ids are rejected."""
     if raw in (None, ""):
         return []
     if not isinstance(raw, list):
         raise AdminInputError("attachments must be a list")
     if len(raw) > MAX_ATTACHMENTS:
         raise AdminInputError(f"at most {MAX_ATTACHMENTS} attachments per mail")
+    if raw and known_ids is not None and not known_ids:
+        raise AdminInputError("the item catalog is not loaded, so items cannot be attached")
     result = []
     for entry in raw:
         if not isinstance(entry, dict):
@@ -57,6 +60,8 @@ def validate_attachments(raw: object) -> list[dict[str, object]]:
             raise AdminInputError("item and num must be whole numbers") from None
         if item <= 0:
             raise AdminInputError("item id must be positive")
+        if known_ids is not None and item not in known_ids:
+            raise AdminInputError(f"unknown item id {item}")
         if not 1 <= num <= MAX_ITEM_NUM:
             raise AdminInputError(f"num must be between 1 and {MAX_ITEM_NUM}")
         result.append({"item": str(item), "num": num})
