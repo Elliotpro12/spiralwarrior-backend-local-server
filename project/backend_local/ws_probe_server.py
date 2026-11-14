@@ -172,17 +172,34 @@ def normalize_db_task_state(raw=None):
     return state
 
 
-def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels):
-    """PlayerData.DBTaskLists entries for every non-level mission with progress."""
+PERIODIC_TASK_TYPES = (3, 10)  # DailyStaticTask (Daily tab) and SeasonWeeklyTask (Weekly tab)
+
+
+def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels,
+                            *, periodic: bool, daily_static_status: int | None = None):
+    """PlayerData.DBTaskLists containers (field 4), one per task type.
+
+    periodic=True: every daily and weekly row, including rows with no progress (shown as DOING,
+    because the client hides INVALID rows). The daily login row uses daily_static_status.
+    periodic=False: the other mission types, only rows with progress.
+    """
     by_type = {}
     for task_id, task in TASK_CATALOG.items():
         task_type = int(task.get("taskType", -1))
-        if task_id == DAILY_STATIC_TASK_ID or task_type == LEVEL_TASK_TYPE or task["maxProcess"] <= 0:
+        if task_type == LEVEL_TASK_TYPE or task["maxProcess"] <= 0:
+            continue
+        if (task_type in PERIODIC_TASK_TYPES) != periodic:
+            continue
+        if task_id == DAILY_STATIC_TASK_ID:
+            if daily_static_status is not None:
+                by_type.setdefault(task_type, []).append((task_id, 1, int(daily_static_status)))
             continue
         process, status = level_task_progress(
             task, inventory_items, db_task_state, progression_counters, part_levels,
         )
-        if process <= 0 and status <= TASK_STATUS_DOING:
+        if periodic:
+            status = max(int(status), TASK_STATUS_DOING)
+        elif process <= 0 and status <= TASK_STATUS_DOING:
             continue
         by_type.setdefault(task_type, []).append((task_id, process, status))
     containers = []
@@ -192,7 +209,7 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
                 protobuf_int(1, process) + protobuf_int(2, status) + protobuf_int(3, 0))))
             for task_id, process, status in entries
         )
-        # EndSymbol: next reset of a daily or weekly container; 0 for types without a period.
+        # EndSymbol: next reset of a daily or weekly container (task_periods, UTC+8); 0 otherwise.
         end_symbol = task_period.next_reset_game_seconds(task_type, game_time_seconds())
         task_list = task_entries + protobuf_int(2, end_symbol) + protobuf_int(3, 0)
         containers.append(protobuf_bytes(4, protobuf_int(1, task_type) + protobuf_bytes(2, task_list)))
@@ -2274,8 +2291,11 @@ def make_public_svr_sync(server_time: int | None = None,
     ))
     # PlayerInfoProto.MaxSubChannel=9: the chat dropdown builds one row per sub-channel;
     # 0 leaves it empty. This local server exposes one sub-channel.
-    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(12, public_svr)
-                   + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
+    # PlayerInfoProto.DailyShop=2 (NetDailyShopProto.NextUpdateTime=1, game seconds): the client
+    # reads it for the Daily Missions countdown (SyncDataManager.getNextUpdateTime).
+    next_daily_reset = task_period.next_reset_game_seconds(3, server_time)
+    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, protobuf_int(1, next_daily_reset))
+                   + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
     body = struct.pack(">IH", 6 + len(player_info), 2) + player_info
     return websocket_binary_frame(body)
 
@@ -2553,6 +2573,7 @@ def make_player_level_sync(*, level: int, exp: int, power: int, task_score: int,
     for container in make_db_task_containers(
         normalize_db_task_state(db_task_state), inventory_items or {},
         progression_counters or {}, part_levels or {},
+        periodic=False,
     ):
         player_data += container
     body = struct.pack(">IH", 6 + len(player_data), 1)
@@ -2762,19 +2783,11 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
     # The static TaskData table has a DailyStaticTask row 1146368048
     # (LoginTimes, target 1). Give this disposable profile one completed,
     # unclaimed daily task so the Missions page has a real local row to render.
-    daily_task = b"".join((
-        protobuf_int(1, 1),  # TaskProcess
-        protobuf_int(2, 3 if daily_task_claimed else 2),  # COMPLETE or REWARDED
-        protobuf_int(3, 0),  # BeginTime
+    periodic_containers = b"".join(make_db_task_containers(
+        normalize_db_task_state(db_task_state), inventory_items or {},
+        progression_counters or {}, part_levels or {},
+        periodic=True, daily_static_status=3 if daily_task_claimed else 2,
     ))
-    daily_task_entry = protobuf_int(1, 1146368048) + protobuf_bytes(2, daily_task)
-    daily_task_list = b"".join((
-        protobuf_bytes(1, daily_task_entry),
-        protobuf_int(2, 0),  # EndSymbol
-        protobuf_int(3, 0),  # Param
-        protobuf_int(4, 0),  # Version
-    ))
-    daily_task_container = protobuf_int(1, DAILY_TASK_TYPE) + protobuf_bytes(2, daily_task_list)
     level_task_container = make_level_task_container(
         level, inventory_items, level_task_state, progression_counters,
         part_levels,
@@ -2792,7 +2805,7 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
             exchange_key_by_ad_times=1 if roguelike_key_ad_claimed else 0,
         )),
         protobuf_bytes(3, make_champion_history_entry(champion_history)),
-        protobuf_bytes(4, daily_task_container),
+        periodic_containers,
         protobuf_int(9, max(0, int(guide_step))),
         protobuf_bytes(17, roguelike_item),
         protobuf_bytes(11, make_pve_info_proto(pve_info)),
@@ -3080,6 +3093,13 @@ def credit_profile_item_reward(app, item_id: int, quantity: int) -> str:
     if destination == "achievement_score":
         app.achievement_total_score = int(getattr(app, "achievement_total_score", 0)) + quantity
         return "achievement_score"
+    if destination == "player_exp":
+        # BaseInfo.Exp (field 7) is read from app.exp; the client's Exp only changes with this counter.
+        app.exp = int(getattr(app, "exp", 0)) + quantity
+        return "player_exp"
+    if destination == "club_score" and club_store.add_club_score(app.player_id, quantity) is not None:
+        # Club points live in the player's club (ClubScore); without a club the item stays in the inventory.
+        return "club_score"
     fragments = getattr(app, "part_fragments", {})
     app.part_fragments = fragments
     return credit_item_reward(app.inventory_items, fragments, item_id, quantity)
@@ -5814,9 +5834,8 @@ class Handler(socketserver.BaseRequestHandler):
                                 purpose="persist daily task score or recompute verified LevelTask progress")
                     if task_score_sync:
                         time.sleep(0.05)
-                        self.request.sendall(make_daily_task_status_sync(
-                            3, task_score_sync[0], task_score_sync[1],
-                        ))
+                        # Full sync: a partial DBTaskLists[3] would replace the other daily rows on the client.
+                        self.request.sendall(make_app_player_data_sync(self.app))
                         self.record("synthetic_daily_task_status_sync", message_id=1,
                                     task_id=task_id, task_status=3,
                                     task_score=task_score_sync[0],

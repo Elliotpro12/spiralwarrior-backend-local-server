@@ -35,7 +35,7 @@ CATEGORY_BY_TYPE: dict[int, str] = {
     0: "part", 1: "part", 2: "part",
     3: "currency", 4: "currency", 25: "currency",
     7: "player_exp",
-    8: "points", 12: "points", 32: "points",
+    8: "points", 12: "points", 32: "club",
     5: "box", 6: "box", 29: "box",
     10: "skin",
     9: "cosmetic", 26: "cosmetic", 27: "cosmetic", 37: "cosmetic", 38: "cosmetic",
@@ -50,7 +50,7 @@ CATEGORY_BY_TYPE: dict[int, str] = {
     34: "battle_pass", 35: "battle_pass",
 }
 
-CATEGORY_BY_TYPE_DESTINATION = {"part": "part_fragments", "box": "save_box"}
+CATEGORY_BY_TYPE_DESTINATION = {"part": "part_fragments", "box": "save_box", "player_exp": "player_exp", "club": "club_score"}
 
 # Ids the server reads as scalar counters or special currencies.
 GOLD_ITEM_ID = 1227894833

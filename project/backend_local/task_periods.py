@@ -5,8 +5,9 @@ Client facts (observed in the client code):
 - Game seconds count from 2018-01-01 00:00 UTC (client getDateTime2018, 1514736000 s).
 
 Inferred, not verified in game:
-- the reset hour is local midnight (daily) and Monday midnight (weekly);
-- the local offset is RESET_UTC_OFFSET_HOURS (Puerto Rico, UTC-4). Change it to match the device.
+- the reset hour is midnight (daily) and Monday midnight (weekly), in UTC+8;
+- the reset offset is RESET_UTC_OFFSET_HOURS = +8: the client's day index and 2018 epoch use the server zone
+  "+08:00" (project.js 240562, 206192-206199), so the daily boundary is 00:00 UTC+8.
 - weekly resets apply to the season weekly tasks (TaskData type 10) and the weekly static type (8).
 """
 
@@ -16,7 +17,7 @@ from typing import Callable
 
 DAY_SECONDS = 86400
 GAME_EPOCH_UNIX = 1514736000
-RESET_UTC_OFFSET_HOURS = -4
+RESET_UTC_OFFSET_HOURS = 8  # client SERVER_TIME_ZONE_STRING = "+08:00" (project.js 240562); getDayIdx counts from 00:00 +08:00
 
 # TaskData_TaskType values that restart on a period boundary.
 PERIODIC_KIND = {
