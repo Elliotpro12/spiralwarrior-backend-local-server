@@ -41,6 +41,7 @@
 !/project/backend_local/tools/download_streamed_resources.py
 !/project/backend_local/tools/build_item_catalog.py
 !/project/backend_local/tools/classify_items.py
+!/project/backend_local/tools/README.md
 !/project/backend_local/data/
 /project/backend_local/data/*
 !/project/backend_local/data/README.md
