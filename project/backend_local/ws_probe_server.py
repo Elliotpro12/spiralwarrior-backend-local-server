@@ -3668,6 +3668,17 @@ def make_bout_response(bout_opr: int) -> bytes:
     return websocket_binary_frame(body)
 
 
+# SC_BoutOpr (client generated code): 1 boutOpr, 2 param1 (int64), 3 param2, 4 param3, 5 WinChair.
+SURVIVAL_PLAYER_COUNT = 81  # Survival card text "Breakout from 81 players" (client TextData).
+
+
+def make_bout_response_with_param(bout_opr: int, param1: int) -> bytes:
+    """ESC_BoutOpr with boutOpr and param1 (for E_MPO_WAITING_OTHER_OVER: param1 = player count)."""
+    proto = protobuf_int(1, int(bout_opr)) + protobuf_int(2, int(param1))
+    body = struct.pack(">IH", 6 + len(proto), 140) + proto
+    return websocket_binary_frame(body)
+
+
 SYNTHETIC_CHAMPION_ROBOTS = (
     # Local all-robot league opponents (negative member IDs are robots in the client).
     ("-1", 0, 1),
@@ -3839,10 +3850,28 @@ def make_race_state_sync(race_id: int, race_type: int,
             protobuf_int(5, 2001),  # MainTop: verified starter part
             protobuf_int(7, 0),  # Emitter
             protobuf_int(8, 1),  # EmitterStar
+            # RacePlayerProto.ToyTopList (field 15): ContainerIntToytopPartProto idx=part id, val=ToytopPartProto
+            # {1 Level, 3 PartAs (1 Top, 2 Mid, 3 Bot)}. Starter parts 2001, 2002, 2003 as in owned_part.
+            # Without it the client's match roster has no tops and ChooseUI9V9.dealUpDownShow throws.
+            *(protobuf_bytes(15, protobuf_int(1, part_id) + protobuf_bytes(2, protobuf_int(1, 1)
+                                                                          + protobuf_int(3, part_as)))
+              for part_id, part_as in ((2001, 1), (2002, 2), (2003, 3))),
         ))
         container = (protobuf_int(1, seat)
                      + protobuf_bytes(2, race_player))
         proto += protobuf_bytes(10, container)
+    if int(race_type) == 3:
+        # RaceProto.BoutList (field 3, ContainerIntBoutProto idx=1 val=BoutProto). The client's
+        # onBoutBegin reads BoutList[last].BoutPlayers[chair] for PointX, PointY and ToyTopIdx;
+        # without it getBoutBeginPos fails and the Survival match never starts.
+        # Inferred layout (generated client code): BoutProto 1 BeginTime, 2 EndTime, 3 RandomSeed,
+        # 4 WinChair, 5 BoutPlayers (idx=1, val=BoutPlayerProto 1 ToyTopIdx, 2 PointX, 3 PointY).
+        bout_players = b""
+        for seat, (px, py) in enumerate(((0, 0), (1, 0))):
+            player = protobuf_int(1, 1) + protobuf_int(2, px) + protobuf_int(3, py)
+            bout_players += protobuf_bytes(5, protobuf_int(1, seat) + protobuf_bytes(2, player))
+        bout = (protobuf_int(1, 0) + protobuf_int(2, 0) + protobuf_int(3, 0) + bout_players)
+        proto += protobuf_bytes(3, protobuf_int(1, 1) + protobuf_bytes(2, bout))
     body = struct.pack(">IH", 6 + len(proto), 4) + proto
     return websocket_binary_frame(body)  # ESC_Race
 
@@ -4193,6 +4222,12 @@ def response_bout_opr_for_request(requested_bout_opr: int,
         return 43
     if requested_bout_opr == 10 and race_type == 3:  # E_RACE_ROBOT_GAME / MPO Survival
         return 10
+    if requested_bout_opr == 24 and race_type == 3:  # E_MPO_REPORT_EQUIPMENT: the module report; begin the bout
+        return 12  # E_BOUT_BEGIN (client onRaceBoutBegin -> RaceBoutBegin)
+    if requested_bout_opr == 4 and race_type == 3:  # E_RACE_TICK during a Survival match: no-op on the client
+        return 4
+    if requested_bout_opr == 12 and race_type == 3:  # E_BOUT_BEGIN sent by the client for the Survival bout
+        return 12
     return 0
 
 
@@ -5410,6 +5445,14 @@ class Handler(socketserver.BaseRequestHandler):
                                     purpose="persist Super Championship record and resync RaceHistory")
                     else:
                         self.request.sendall(make_bout_response(response_bout_opr))
+                        if response_bout_opr == 10 and race_type == 3:
+                            # Survival (MPO): the client loads the match scene on E_MPO_WAITING_OTHER_OVER.
+                            self.request.sendall(make_bout_response_with_param(20, SURVIVAL_PLAYER_COUNT))
+                            # E_MPO_NOTIFY_REPORT_EQUIPMENT (23): the client opens its module grid and answers with bout 24.
+                            self.request.sendall(make_bout_response(23))
+                            self.record("synthetic_mpo_waiting_other_over", response_id=141,
+                                        player_count=SURVIVAL_PLAYER_COUNT,
+                                        purpose="client ChiJi match scene needs ChiJiRacePlayerNum")
                     if requested_bout_opr == 40 and race_type == 5:
                         self.request.sendall(make_champ_load_robots(1, 1))
                         self.record("synthetic_champ_load_robots", response_id=249,
