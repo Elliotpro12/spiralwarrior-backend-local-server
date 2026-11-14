@@ -22,6 +22,7 @@
 !/project/backend_local/generate_lan_launcher.py
 !/project/backend_local/ASSET_MIRRORS_AND_RECOVERY.md
 !/project/backend_local/ANDROID_12_PLUS_COMPATIBILITY.md
+!/project/backend_local/SURVIVAL_MODE_NOTES.md
 !/project/backend_local/admin_mail.py
 !/project/backend_local/chat_history.py
 !/project/backend_local/club_store.py
@@ -32,6 +33,7 @@
 !/project/backend_local/skins.py
 !/project/backend_local/cosmetics.py
 !/project/backend_local/task_periods.py
+!/project/backend_local/season_config.py
 !/project/backend_local/item_registry.py
 !/project/backend_local/admin_locales.py
 !/project/backend_local/admin/

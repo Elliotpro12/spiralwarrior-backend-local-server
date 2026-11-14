@@ -102,6 +102,7 @@
     <button class="tab" role="tab" aria-selected="true" data-tab="mail" data-i18n="tabMail">Send mail</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="items" data-i18n="tabItems">Item list</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="notice" data-i18n="tabNotice">Notice board</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="season" data-i18n="tabSeason">Seasons</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="history" data-i18n="tabHistory">History</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="settings" data-i18n="tabSettings">Settings</button>
   </div>
@@ -175,6 +176,22 @@
     <div class="actions hidden" id="previewActions">
       <button class="btn ghost small" id="closePreview" data-i18n="closePreview">Close</button>
     </div>
+  </section>
+
+  <section id="tab-season" class="panel hidden">
+    <h2 data-i18n="seasonHeading">Season missions</h2>
+    <p class="hint" data-i18n="seasonHint">The Season tab of the missions stays closed until a season is open. The game files do not say how long a season lasts, so you set the length here. Starting a season resets the season mission progress.</p>
+    <p id="seasonStatus" class="hint"></p>
+    <label for="seasonName" data-i18n="seasonNameLabel">Name</label>
+    <input id="seasonName" type="text" maxlength="60" value="">
+    <label for="seasonDays" data-i18n="seasonDaysLabel">Length in days (1 to 366)</label>
+    <input id="seasonDays" type="number" min="1" max="366" value="21">
+    <p class="hint" data-i18n="seasonDefaultNote">Default 21 days: the Champions League season length in the game text (3 weeks).</p>
+    <div class="actions">
+      <button class="btn" id="seasonStart" data-i18n="seasonStart">Start season</button>
+      <button class="btn ghost" id="seasonStop" data-i18n="seasonStop">End season now</button>
+    </div>
+    <div class="msg" id="seasonMsg"></div>
   </section>
 
   <section id="tab-history" class="panel hidden">
@@ -266,6 +283,20 @@ const STRINGS = {
     tabNotice: "Notice board",
     tabSettings: "Settings",
     tabHistory: "History",
+    tabSeason: "Seasons",
+    seasonHeading: "Season missions",
+    seasonHint: "The Season tab of the missions stays closed until a season is open. The game files do not say how long a season lasts, so you set the length here. Starting a season resets the season mission progress.",
+    seasonNameLabel: "Name",
+    seasonDaysLabel: "Length in days (1 to 366)",
+    seasonDefaultNote: "Default 21 days: the Champions League season length in the game text (3 weeks).",
+    seasonStart: "Start season",
+    seasonStop: "End season now",
+    seasonStatusOpen: "Open: \"{0}\", {1} d {2} h left.",
+    seasonStatusClosed: "No season is open. Players see \"This event is over\" on the Season tab.",
+    seasonStarted: "Season started: {0}.",
+    seasonEnded: "Season ended. Players see \"This event is over\" on the Season tab.",
+    seasonNotChanged: "Season not changed: {0}",
+    seasonLoadError: "Could not load the season: {0}",
     historyTabHeading: "History",
     mailHistoryHeading: "Mail sent",
     noticeHistoryHeading: "Previous notices",
@@ -371,6 +402,20 @@ const STRINGS = {
     tabNotice: "Tablón de anuncios",
     tabSettings: "Ajustes",
     tabHistory: "Historial",
+    tabSeason: "Temporadas",
+    seasonHeading: "Misiones de temporada",
+    seasonHint: "La pestaña Temporada de misiones permanece cerrada hasta que haya una temporada abierta. Los archivos del juego no dicen cuánto dura una temporada, así que la duración la pones aquí. Al iniciar una temporada se reinicia el progreso de sus misiones.",
+    seasonNameLabel: "Nombre",
+    seasonDaysLabel: "Duración en días (1 a 366)",
+    seasonDefaultNote: "Por defecto 21 días: la duración de temporada de la Liga de Campeones en el texto del juego (3 semanas).",
+    seasonStart: "Iniciar temporada",
+    seasonStop: "Terminar temporada ahora",
+    seasonStatusOpen: "Abierta: \"{0}\", quedan {1} d {2} h.",
+    seasonStatusClosed: "No hay temporada abierta. Los jugadores ven \"This event is over\" en la pestaña Temporada.",
+    seasonStarted: "Temporada iniciada: {0}.",
+    seasonEnded: "Temporada terminada. Los jugadores ven \"This event is over\" en la pestaña Temporada.",
+    seasonNotChanged: "Temporada sin cambios: {0}",
+    seasonLoadError: "No se pudo cargar la temporada: {0}",
     historyTabHeading: "Historial",
     mailHistoryHeading: "Correos enviados",
     noticeHistoryHeading: "Anuncios anteriores",
@@ -1121,12 +1166,50 @@ $("saveNotice").onclick = async () => {
 };
 $("reloadNotice").onclick = loadNotice;
 
+function renderSeason(season) {
+  const days = Math.floor(season.remaining_seconds / 86400);
+  const hours = Math.floor((season.remaining_seconds % 86400) / 3600);
+  $("seasonStatus").textContent = season.open ? t("seasonStatusOpen", season.name, days, hours) : t("seasonStatusClosed");
+  $("seasonStop").disabled = !season.open;
+}
+
+async function loadSeason() {
+  try {
+    const data = await api("/admin/api/season");
+    renderSeason(data.season);
+  } catch (e) {
+    showMsg($("seasonMsg"), t("seasonLoadError", e.message), false);
+  }
+}
+
+$("seasonStart").onclick = async () => {
+  const body = { action: "start", name: $("seasonName").value, days: Number($("seasonDays").value) };
+  try {
+    const result = await api("/admin/api/season", { method: "POST", body: JSON.stringify(body) });
+    renderSeason(result.season);
+    showMsg($("seasonMsg"), t("seasonStarted", result.season.name), true);
+  } catch (e) {
+    showMsg($("seasonMsg"), t("seasonNotChanged", e.message), false);
+  }
+};
+
+$("seasonStop").onclick = async () => {
+  try {
+    const result = await api("/admin/api/season", { method: "POST", body: JSON.stringify({ action: "stop" }) });
+    renderSeason(result.season);
+    showMsg($("seasonMsg"), t("seasonEnded"), true);
+  } catch (e) {
+    showMsg($("seasonMsg"), t("seasonNotChanged", e.message), false);
+  }
+};
+
 $("saveToken").onclick = () => {
   saveToken(currentToken());
   iconCache.clear();
   loadStatus();
   loadNotice();
   loadCatalog();
+  loadSeason();
   loadLanguageList().then(ensureActiveLanguage).catch(() => {});
   showMsg($("settingsMsg"), t("tokenSaved"), true);
 };
@@ -1138,6 +1221,7 @@ $("rememberToken").checked = rememberEnabled();
 applyLanguage();
 addAttachment(PRESETS.gold.item, PRESETS.gold.num);
 loadStatus();
+loadSeason();
 loadNotice();
 loadCatalog();
 loadLanguageList().then(ensureActiveLanguage).catch(() => {});

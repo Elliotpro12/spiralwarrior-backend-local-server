@@ -33,6 +33,7 @@ from admin_mail import claim_mail
 import save_boxes as save_box
 import item_registry
 import task_periods as task_period
+import season_config
 import cosmetics as cosmetic
 import skins as part_skin
 import item_catalog
@@ -172,17 +173,39 @@ def normalize_db_task_state(raw=None):
     return state
 
 
-def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels):
-    """PlayerData.DBTaskLists entries for every non-level mission with progress."""
+SEASON_TASK_TYPE = 9  # SeasonStaticTask (Season tab): only sent while a season is open (season_config.py)
+PERIODIC_TASK_TYPES = (3, 9, 10)  # DailyStaticTask (Daily tab), SeasonStaticTask (Season tab), SeasonWeeklyTask (Weekly tab)
+
+
+def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels,
+                            *, periodic: bool, daily_static_status: int | None = None):
+    """PlayerData.DBTaskLists containers (field 4), one per task type.
+
+    periodic=True: every daily and weekly row, including rows with no progress (shown as DOING,
+    because the client hides INVALID rows). The daily login row uses daily_static_status.
+    periodic=False: the other mission types, only rows with progress.
+    """
     by_type = {}
+    game_now = game_time_seconds()
+    season_end = season_config.end_game_seconds(game_now)
     for task_id, task in TASK_CATALOG.items():
         task_type = int(task.get("taskType", -1))
-        if task_id == DAILY_STATIC_TASK_ID or task_type == LEVEL_TASK_TYPE or task["maxProcess"] <= 0:
+        if task_type == LEVEL_TASK_TYPE or task["maxProcess"] <= 0:
+            continue
+        if task_type == SEASON_TASK_TYPE and season_end <= 0:
+            continue  # no open season: the Season tab shows "This event is over"
+        if (task_type in PERIODIC_TASK_TYPES) != periodic:
+            continue
+        if task_id == DAILY_STATIC_TASK_ID:
+            if daily_static_status is not None:
+                by_type.setdefault(task_type, []).append((task_id, 1, int(daily_static_status)))
             continue
         process, status = level_task_progress(
             task, inventory_items, db_task_state, progression_counters, part_levels,
         )
-        if process <= 0 and status <= TASK_STATUS_DOING:
+        if periodic:
+            status = max(int(status), TASK_STATUS_DOING)
+        elif process <= 0 and status <= TASK_STATUS_DOING:
             continue
         by_type.setdefault(task_type, []).append((task_id, process, status))
     containers = []
@@ -192,8 +215,12 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
                 protobuf_int(1, process) + protobuf_int(2, status) + protobuf_int(3, 0))))
             for task_id, process, status in entries
         )
-        # EndSymbol: next reset of a daily or weekly container; 0 for types without a period.
-        end_symbol = task_period.next_reset_game_seconds(task_type, game_time_seconds())
+        # EndSymbol: next reset of a daily or weekly container (task_periods, UTC+8);
+        # the open season's end for the season container; 0 otherwise.
+        if task_type == SEASON_TASK_TYPE:
+            end_symbol = season_end
+        else:
+            end_symbol = task_period.next_reset_game_seconds(task_type, game_now)
         task_list = task_entries + protobuf_int(2, end_symbol) + protobuf_int(3, 0)
         containers.append(protobuf_bytes(4, protobuf_int(1, task_type) + protobuf_bytes(2, task_list)))
     return containers
@@ -2274,8 +2301,11 @@ def make_public_svr_sync(server_time: int | None = None,
     ))
     # PlayerInfoProto.MaxSubChannel=9: the chat dropdown builds one row per sub-channel;
     # 0 leaves it empty. This local server exposes one sub-channel.
-    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(12, public_svr)
-                   + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
+    # PlayerInfoProto.DailyShop=2 (NetDailyShopProto.NextUpdateTime=1, game seconds): the client
+    # reads it for the Daily Missions countdown (SyncDataManager.getNextUpdateTime).
+    next_daily_reset = task_period.next_reset_game_seconds(3, server_time)
+    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, protobuf_int(1, next_daily_reset))
+                   + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
     body = struct.pack(">IH", 6 + len(player_info), 2) + player_info
     return websocket_binary_frame(body)
 
@@ -2553,6 +2583,7 @@ def make_player_level_sync(*, level: int, exp: int, power: int, task_score: int,
     for container in make_db_task_containers(
         normalize_db_task_state(db_task_state), inventory_items or {},
         progression_counters or {}, part_levels or {},
+        periodic=False,
     ):
         player_data += container
     body = struct.pack(">IH", 6 + len(player_data), 1)
@@ -2762,19 +2793,11 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
     # The static TaskData table has a DailyStaticTask row 1146368048
     # (LoginTimes, target 1). Give this disposable profile one completed,
     # unclaimed daily task so the Missions page has a real local row to render.
-    daily_task = b"".join((
-        protobuf_int(1, 1),  # TaskProcess
-        protobuf_int(2, 3 if daily_task_claimed else 2),  # COMPLETE or REWARDED
-        protobuf_int(3, 0),  # BeginTime
+    periodic_containers = b"".join(make_db_task_containers(
+        normalize_db_task_state(db_task_state), inventory_items or {},
+        progression_counters or {}, part_levels or {},
+        periodic=True, daily_static_status=3 if daily_task_claimed else 2,
     ))
-    daily_task_entry = protobuf_int(1, 1146368048) + protobuf_bytes(2, daily_task)
-    daily_task_list = b"".join((
-        protobuf_bytes(1, daily_task_entry),
-        protobuf_int(2, 0),  # EndSymbol
-        protobuf_int(3, 0),  # Param
-        protobuf_int(4, 0),  # Version
-    ))
-    daily_task_container = protobuf_int(1, DAILY_TASK_TYPE) + protobuf_bytes(2, daily_task_list)
     level_task_container = make_level_task_container(
         level, inventory_items, level_task_state, progression_counters,
         part_levels,
@@ -2792,7 +2815,7 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
             exchange_key_by_ad_times=1 if roguelike_key_ad_claimed else 0,
         )),
         protobuf_bytes(3, make_champion_history_entry(champion_history)),
-        protobuf_bytes(4, daily_task_container),
+        periodic_containers,
         protobuf_int(9, max(0, int(guide_step))),
         protobuf_bytes(17, roguelike_item),
         protobuf_bytes(11, make_pve_info_proto(pve_info)),
@@ -3080,6 +3103,13 @@ def credit_profile_item_reward(app, item_id: int, quantity: int) -> str:
     if destination == "achievement_score":
         app.achievement_total_score = int(getattr(app, "achievement_total_score", 0)) + quantity
         return "achievement_score"
+    if destination == "player_exp":
+        # BaseInfo.Exp (field 7) is read from app.exp; the client's Exp only changes with this counter.
+        app.exp = int(getattr(app, "exp", 0)) + quantity
+        return "player_exp"
+    if destination == "club_score" and club_store.add_club_score(app.player_id, quantity) is not None:
+        # Club points live in the player's club (ClubScore); without a club the item stays in the inventory.
+        return "club_score"
     fragments = getattr(app, "part_fragments", {})
     app.part_fragments = fragments
     return credit_item_reward(app.inventory_items, fragments, item_id, quantity)
@@ -3638,6 +3668,17 @@ def make_bout_response(bout_opr: int) -> bytes:
     return websocket_binary_frame(body)
 
 
+# SC_BoutOpr (client generated code): 1 boutOpr, 2 param1 (int64), 3 param2, 4 param3, 5 WinChair.
+SURVIVAL_PLAYER_COUNT = 81  # Survival card text "Breakout from 81 players" (client TextData).
+
+
+def make_bout_response_with_param(bout_opr: int, param1: int) -> bytes:
+    """ESC_BoutOpr with boutOpr and param1 (for E_MPO_WAITING_OTHER_OVER: param1 = player count)."""
+    proto = protobuf_int(1, int(bout_opr)) + protobuf_int(2, int(param1))
+    body = struct.pack(">IH", 6 + len(proto), 140) + proto
+    return websocket_binary_frame(body)
+
+
 SYNTHETIC_CHAMPION_ROBOTS = (
     # Local all-robot league opponents (negative member IDs are robots in the client).
     ("-1", 0, 1),
@@ -3809,10 +3850,28 @@ def make_race_state_sync(race_id: int, race_type: int,
             protobuf_int(5, 2001),  # MainTop: verified starter part
             protobuf_int(7, 0),  # Emitter
             protobuf_int(8, 1),  # EmitterStar
+            # RacePlayerProto.ToyTopList (field 15): ContainerIntToytopPartProto idx=part id, val=ToytopPartProto
+            # {1 Level, 3 PartAs (1 Top, 2 Mid, 3 Bot)}. Starter parts 2001, 2002, 2003 as in owned_part.
+            # Without it the client's match roster has no tops and ChooseUI9V9.dealUpDownShow throws.
+            *(protobuf_bytes(15, protobuf_int(1, part_id) + protobuf_bytes(2, protobuf_int(1, 1)
+                                                                          + protobuf_int(3, part_as)))
+              for part_id, part_as in ((2001, 1), (2002, 2), (2003, 3))),
         ))
         container = (protobuf_int(1, seat)
                      + protobuf_bytes(2, race_player))
         proto += protobuf_bytes(10, container)
+    if int(race_type) == 3:
+        # RaceProto.BoutList (field 3, ContainerIntBoutProto idx=1 val=BoutProto). The client's
+        # onBoutBegin reads BoutList[last].BoutPlayers[chair] for PointX, PointY and ToyTopIdx;
+        # without it getBoutBeginPos fails and the Survival match never starts.
+        # Inferred layout (generated client code): BoutProto 1 BeginTime, 2 EndTime, 3 RandomSeed,
+        # 4 WinChair, 5 BoutPlayers (idx=1, val=BoutPlayerProto 1 ToyTopIdx, 2 PointX, 3 PointY).
+        bout_players = b""
+        for seat, (px, py) in enumerate(((0, 0), (1, 0))):
+            player = protobuf_int(1, 1) + protobuf_int(2, px) + protobuf_int(3, py)
+            bout_players += protobuf_bytes(5, protobuf_int(1, seat) + protobuf_bytes(2, player))
+        bout = (protobuf_int(1, 0) + protobuf_int(2, 0) + protobuf_int(3, 0) + bout_players)
+        proto += protobuf_bytes(3, protobuf_int(1, 1) + protobuf_bytes(2, bout))
     body = struct.pack(">IH", 6 + len(proto), 4) + proto
     return websocket_binary_frame(body)  # ESC_Race
 
@@ -4163,6 +4222,12 @@ def response_bout_opr_for_request(requested_bout_opr: int,
         return 43
     if requested_bout_opr == 10 and race_type == 3:  # E_RACE_ROBOT_GAME / MPO Survival
         return 10
+    if requested_bout_opr == 24 and race_type == 3:  # E_MPO_REPORT_EQUIPMENT: the module report; begin the bout
+        return 12  # E_BOUT_BEGIN (client onRaceBoutBegin -> RaceBoutBegin)
+    if requested_bout_opr == 4 and race_type == 3:  # E_RACE_TICK during a Survival match: no-op on the client
+        return 4
+    if requested_bout_opr == 12 and race_type == 3:  # E_BOUT_BEGIN sent by the client for the Survival bout
+        return 12
     return 0
 
 
@@ -5380,6 +5445,14 @@ class Handler(socketserver.BaseRequestHandler):
                                     purpose="persist Super Championship record and resync RaceHistory")
                     else:
                         self.request.sendall(make_bout_response(response_bout_opr))
+                        if response_bout_opr == 10 and race_type == 3:
+                            # Survival (MPO): the client loads the match scene on E_MPO_WAITING_OTHER_OVER.
+                            self.request.sendall(make_bout_response_with_param(20, SURVIVAL_PLAYER_COUNT))
+                            # E_MPO_NOTIFY_REPORT_EQUIPMENT (23): the client opens its module grid and answers with bout 24.
+                            self.request.sendall(make_bout_response(23))
+                            self.record("synthetic_mpo_waiting_other_over", response_id=141,
+                                        player_count=SURVIVAL_PLAYER_COUNT,
+                                        purpose="client ChiJi match scene needs ChiJiRacePlayerNum")
                     if requested_bout_opr == 40 and race_type == 5:
                         self.request.sendall(make_champ_load_robots(1, 1))
                         self.record("synthetic_champ_load_robots", response_id=249,
@@ -5814,9 +5887,8 @@ class Handler(socketserver.BaseRequestHandler):
                                 purpose="persist daily task score or recompute verified LevelTask progress")
                     if task_score_sync:
                         time.sleep(0.05)
-                        self.request.sendall(make_daily_task_status_sync(
-                            3, task_score_sync[0], task_score_sync[1],
-                        ))
+                        # Full sync: a partial DBTaskLists[3] would replace the other daily rows on the client.
+                        self.request.sendall(make_app_player_data_sync(self.app))
                         self.record("synthetic_daily_task_status_sync", message_id=1,
                                     task_id=task_id, task_status=3,
                                     task_score=task_score_sync[0],

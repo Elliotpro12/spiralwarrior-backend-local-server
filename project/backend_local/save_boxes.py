@@ -27,7 +27,7 @@ from typing import Callable
 MAX_SAVEBOX_NUM = 4  # Client constant MAX_SAVEBOX_NUM: slots the client draws.
 # Chests beyond the visible slots stay in SaveBoxList as locked entries (the client shows them when a
 # slot frees). The storage limit is not in the client; this value is an inferred cap.
-MAX_STORED_BOXES = 32
+MAX_STORED_BOXES = 4  # Client constant MAX_SAVEBOX_NUM = 4 (project.js 212133); overflow boxes go to the inventory
 FREE_OPEN_SECONDS = 600  # Client FREE_OPEN_BOX_TIME_RATIO: remaining time under this opens for free.
 PURCHASE_TIME_SECONDS = 1200  # Client PURCHASE_OPEN_BOX_TIME_RATIO: one diamond per this many seconds.
 PURCHASE_COST_PER_UNIT = 1  # Client PURCHASE_OPEN_BOX_COST_RATIO.

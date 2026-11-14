@@ -56,6 +56,31 @@ def _save_state(state: dict[str, Any], path: Path = CLUB_STATE_FILE) -> None:
     os.replace(temp, path)
 
 
+def _score_of(club: dict[str, Any], key: str) -> int:
+    """Club score counter (total, history, cur or week); zero until a club activity item adds points."""
+    return max(0, int((club.get("score") or {}).get(key, 0)))
+
+
+def add_club_score(user_id: str | int, amount: int, path: Path = CLUB_STATE_FILE) -> dict[str, Any] | None:
+    """Add club-activity points to the club of this player. Returns the club, or None if the player has no club.
+
+    The client reads totalScore, historyScore, curScore and weekScore from the club info (Club.init).
+    Assumption: an activity point adds to the total, current and weekly counters; historyScore is not changed.
+    """
+    amount = max(0, int(amount))
+    with _LOCK:
+        state = load_state(path)
+        uid = str(user_id)
+        for club in state["clubs"].values():
+            if uid in club.get("members", []):
+                score = club.setdefault("score", {"total": 0, "history": 0, "cur": 0, "week": 0})
+                for key in ("total", "cur", "week"):
+                    score[key] = int(score.get(key, 0)) + amount
+                _save_state(state, path)
+                return club
+    return None
+
+
 def club_for_user(user_id: str | int, path: Path = CLUB_STATE_FILE) -> dict[str, Any] | None:
     uid = str(user_id)
     for club in load_state(path)["clubs"].values():
@@ -141,10 +166,10 @@ def club_client_view(club: dict[str, Any] | None) -> dict[str, Any] | None:
         "time": club["time"],
         "type": club["type"],
         "owner": leader,
-        "totalScore": 0,
-        "historyScore": 0,
-        "curScore": 0,
-        "weekScore": 0,
+        "totalScore": _score_of(club, "total"),
+        "historyScore": _score_of(club, "history"),
+        "curScore": _score_of(club, "cur"),
+        "weekScore": _score_of(club, "week"),
         "totalMedal": 0,
         "roundMedal": 0,
         "meta": dict(club["meta"]),

@@ -27,6 +27,7 @@ import friend_store
 import hmac
 import admin_locales
 import admin_mail
+import season_config
 import item_registry
 import item_catalog
 from mail_fixture import DEFAULT_STATE_FILE, MAIL_STATE_READ, MAIL_STATE_RECEIVED, update_mail_state, visible_mails
@@ -284,6 +285,11 @@ class Handler(BaseHTTPRequestHandler):
                                    "notice": admin_mail.read_notice(self.app.notice_file)},
                              send_body=send_body)
             return
+        if path == "/admin/api/season" and method in ("GET", "HEAD"):
+            if not self._admin_ready(send_body):
+                return
+            self._admin_json(200, {"season": season_config.status()}, send_body=send_body)
+            return
         if path == "/admin/api/items" and method in ("GET", "HEAD"):
             if not self._admin_ready(send_body):
                 return
@@ -358,6 +364,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._admin_json(400, {"error": "invalid_notice", "message": str(exc)})
                 return
             self._admin_json(200, {"ok": True, "chars": len(admin_mail.read_notice(self.app.notice_file))})
+            return
+        if path == "/admin/api/season":
+            try:
+                action = str(payload.get("action", ""))
+                if action == "start":
+                    season_config.start(payload.get("name"), payload.get("days"))
+                elif action == "stop":
+                    season_config.stop()
+                else:
+                    raise season_config.SeasonError("action must be 'start' or 'stop'")
+            except season_config.SeasonError as exc:
+                self._admin_json(400, {"error": "invalid_season", "message": str(exc)})
+                return
+            self._admin_json(200, {"ok": True, "season": season_config.status()})
             return
         if path == "/admin/api/mail":
             store = getattr(self.app, "account_store", None)
