@@ -1,54 +1,49 @@
-"""Build the local item catalog (ids, names, icons) for the admin tools.
+"""Build the local item, box and skin catalogs from your own copy of the game.
 
-Inputs (client data, never published):
-- the decrypted Item and TextData-English tables (recovered_local/tables/*.json);
-- NewAssets.apk, for sprite frames (assets/res/import/*.json) and textures (assets/res/raw-assets);
-- recovered/streamed_resources/assets/res (import JSON and raw-assets PNG/PKM), for the sprites and
-  textures that NewAssets.apk does not ship.
+Nothing in this repository contains game data. You provide the inputs from a copy of
+Spiral Warrior 1.1.0.96 that you are allowed to inspect. See tools/README.md for the full procedure.
 
-Outputs (local, under backend_local/data, not for distribution):
-- data/item_catalog.json   list of {id, name, type, icon}
-- data/item_icons/<id>.png 96px icons cropped from the sprite frame rect
-- data/ITEMS_LIST.txt      every item id with its name, type, and icon file
+Inputs
+- --tables DIR     decrypted client tables: Item.json, TextData-English.json, Chance.json, SkinData.json
+- --settings FILE  the client settings.js (texture uuid map)
+- --apk FILE       NewAssets.apk from the same client version (sprite frames and textures)
+- --streamed DIR   optional: streamed resources folder containing import/ and raw-assets/
+- --extra-apk FILE optional, repeatable: other APKs of the same version that carry missing textures
 
-Usage:
-    python tools/build_item_catalog.py <recovered_local dir> <NewAssets.apk>
+Outputs (default: backend_local/data, git-ignored)
+- item_catalog.json       list of {id, name, type, icon}
+- item_icons/<id>.png     96px icons cropped from the sprite frame rect
+- ITEMS_LIST.txt          every item id with its name, type and icon file
+- box_catalog.json        reward rows per box id (Chance table) and opening delay
+- skin_catalog.json       part skins (SkinData table)
+
+Usage (from backend_local):
+    python tools/build_item_catalog.py --tables <tables dir> --settings <settings.js> --apk <NewAssets.apk>
 """
 
 from __future__ import annotations
 
+import argparse
 import io
-import re
 import json
+import re
 import struct
 import sys
 import zipfile
 from pathlib import Path
 
-import texture2ddecoder
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data"
-ICON_DIR = DATA / "item_icons"
 ICON_SIZE = 96
 B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-STREAMED_RES = ROOT.parent / "recovered" / "streamed_resources" / "assets" / "res"
-IMPORT_ROOT = STREAMED_RES / "import"
-RAW_ROOT = STREAMED_RES / "raw-assets"
-# Local packages that still carry textures missing from the streamed folder (our own loopback build).
-# The installed game APK (pulled from the device) carries the sprite frames and textures the packages above lack.
-EXTRA_ARCHIVES = [
-    ROOT.parent / "extracted" / "apk" / "device_installed_base.apk",
-    ROOT.parent / "releases" / "android16_loopback" / "SpiralWarrior_AllInOne_Loopback.apk",
-]
-EXTRA_TEXTURE_ARCHIVES = EXTRA_ARCHIVES
-# PKM format codes (Khronos ETC): 0 ETC1 RGB, 1 ETC2 RGB, 3 ETC2 RGBA8 (the only one seen in this build).
-PKM_DECODERS = {
-    0: texture2ddecoder.decode_etc1,
-    1: texture2ddecoder.decode_etc2,
-    3: texture2ddecoder.decode_etc2a8,
-}
+
+# Set by main() from the command line.
+DATA = ROOT / "data"
+ICON_DIR = DATA / "item_icons"
+IMPORT_ROOT: Path | None = None
+RAW_ROOT: Path | None = None
+EXTRA_ARCHIVES: list[Path] = []
 
 
 def expand_uuid(short: str) -> str:
@@ -59,8 +54,12 @@ def expand_uuid(short: str) -> str:
     return f"{full[:8]}-{full[8:12]}-{full[12:16]}-{full[16:20]}-{full[20:]}"
 
 
-def load_names(recovered: Path) -> dict[int, str]:
-    rows = json.loads((recovered / "tables" / "TextData-English.json").read_text(encoding="utf-8"))["Items"]
+def read_table(tables: Path, name: str) -> dict:
+    return json.loads((tables / name).read_text(encoding="utf-8"))
+
+
+def load_names(tables: Path) -> dict[int, str]:
+    rows = read_table(tables, "TextData-English.json")["Items"]
     return {int(row["Id"]): str(row.get("English") or "").strip() for row in rows}
 
 
@@ -69,7 +68,7 @@ def import_documents(apk: zipfile.ZipFile):
     for name in apk.namelist():
         if name.startswith("assets/res/import/") and name.endswith(".json"):
             yield apk.read(name)
-    if IMPORT_ROOT.is_dir():
+    if IMPORT_ROOT is not None and IMPORT_ROOT.is_dir():
         for path in sorted(IMPORT_ROOT.rglob("*.json")):
             yield path.read_bytes()
 
@@ -94,12 +93,25 @@ def sprite_index(apk: zipfile.ZipFile) -> dict[str, tuple[str, list[int]]]:
     return index
 
 
+def pkm_decoders() -> dict[int, object]:
+    """PKM format codes (Khronos ETC): 0 ETC1 RGB, 1 ETC2 RGB, 3 ETC2 RGBA8 (the only one seen in this build).
+
+    texture2ddecoder is imported here, so the rest of the tool runs without it.
+    """
+    import texture2ddecoder
+    return {
+        0: texture2ddecoder.decode_etc1,
+        1: texture2ddecoder.decode_etc2,
+        3: texture2ddecoder.decode_etc2a8,
+    }
+
+
 def decode_pkm(data: bytes) -> Image.Image | None:
     """Decode a PKM texture: 16-byte big-endian header, then the compressed 4x4 blocks."""
     if len(data) < 16 or data[:4] != b"PKM ":
         return None
     fmt, ext_w, ext_h, width, height = struct.unpack(">5H", data[6:16])
-    decoder = PKM_DECODERS.get(fmt)
+    decoder = pkm_decoders().get(fmt)
     if decoder is None:
         return None
     pixels = decoder(data[16:], ext_w, ext_h)
@@ -111,12 +123,12 @@ def load_texture(apk: zipfile.ZipFile, members: set[str], texture_short: str) ->
     return load_texture_full(apk, members, expand_uuid(texture_short))
 
 
-def whole_image_index(recovered: Path) -> dict[str, str]:
+def whole_image_index(settings: Path) -> dict[str, str]:
     """Image name -> texture uuid for whole PNG assets listed in the client resource map (settings.js).
 
     Those assets are the icon itself, with no sprite rectangle to crop.
     """
-    src = (recovered / "settings.js").read_text(encoding="utf-8", errors="replace")
+    src = settings.read_text(encoding="utf-8", errors="replace")
     uuids = json.loads(re.search(r"uuids:(\[.*?\])", src, re.S).group(1))
     index: dict[str, str] = {}
     for match in re.finditer(r'"(\d+)":\["([^"]+\.png)",5\]', src):
@@ -129,20 +141,19 @@ def load_texture_full(apk: zipfile.ZipFile, members: set[str], texture: str) -> 
     member = f"assets/res/raw-assets/{texture[:2]}/{texture}.png"
     if member in members:
         return Image.open(io.BytesIO(apk.read(member))).convert("RGBA")
-    png = RAW_ROOT / texture[:2] / f"{texture}.png"
-    if png.is_file():
-        return Image.open(png).convert("RGBA")
-    pkm = RAW_ROOT / texture[:2] / f"{texture}.pkm"
-    if pkm.is_file():
-        return decode_pkm(pkm.read_bytes())
+    if RAW_ROOT is not None:
+        png = RAW_ROOT / texture[:2] / f"{texture}.png"
+        if png.is_file():
+            return Image.open(png).convert("RGBA")
+        pkm = RAW_ROOT / texture[:2] / f"{texture}.pkm"
+        if pkm.is_file():
+            return decode_pkm(pkm.read_bytes())
     return load_extra_texture(texture)
 
 
 def load_extra_texture(texture: str) -> Image.Image | None:
-    """Look for the texture in the extra local archives (PNG first, then PKM)."""
-    for archive_path in EXTRA_TEXTURE_ARCHIVES:
-        if not archive_path.is_file():
-            continue
+    """Look for the texture in the extra APKs given with --extra-apk (PNG first, then PKM)."""
+    for archive_path in EXTRA_ARCHIVES:
         with zipfile.ZipFile(archive_path) as archive:
             names = set(archive.namelist())
             png = f"assets/res/raw-assets/{texture[:2]}/{texture}.png"
@@ -163,9 +174,9 @@ def crop_icon(texture: Image.Image, rect: list[int]) -> Image.Image | None:
     return icon
 
 
-def build_box_catalog(recovered: Path, items: list[dict]) -> int:
+def build_box_catalog(tables: Path, items: list[dict]) -> int:
     """Weighted reward rows per box id (Chance table) and the opening delay in seconds (Item table)."""
-    chance = json.loads((recovered / "tables" / "Chance.json").read_text(encoding="utf-8"))["Items"]
+    chance = read_table(tables, "Chance.json")["Items"]
     delays = {int(row["ItemId"]): int(float(row.get("DelayOpenTime") or 0)) for row in items}
     boxes: dict[str, dict] = {}
     for row in chance:
@@ -184,9 +195,9 @@ def build_box_catalog(recovered: Path, items: list[dict]) -> int:
     return len(boxes)
 
 
-def build_skin_catalog(recovered: Path) -> int:
+def build_skin_catalog(tables: Path) -> int:
     """Part skins from the client SkinData table: skin id -> part, index and price (Worth)."""
-    rows = json.loads((recovered / "tables" / "SkinData.json").read_text(encoding="utf-8"))["Items"]
+    rows = read_table(tables, "SkinData.json")["Items"]
     skins = {}
     for row in rows:
         worth = row.get("Worth") or {}
@@ -200,23 +211,48 @@ def build_skin_catalog(recovered: Path) -> int:
     return len(skins)
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        print(__doc__)
-        return 2
-    recovered = Path(sys.argv[1])
-    apk_path = Path(sys.argv[2])
-    names = load_names(recovered)
-    items = json.loads((recovered / "tables" / "Item.json").read_text(encoding="utf-8"))["Items"]
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--tables", type=Path, required=True, help="folder with the decrypted client tables")
+    parser.add_argument("--settings", type=Path, required=True, help="client settings.js")
+    parser.add_argument("--apk", type=Path, required=True, help="NewAssets.apk of the same client version")
+    parser.add_argument("--streamed", type=Path, help="streamed resources folder (import/ and raw-assets/)")
+    parser.add_argument("--extra-apk", type=Path, action="append", default=[], help="extra APK, repeatable")
+    parser.add_argument("--out", type=Path, default=ROOT / "data", help="output folder (default: backend_local/data)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    global DATA, ICON_DIR, IMPORT_ROOT, RAW_ROOT, EXTRA_ARCHIVES
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    for required in (args.tables, args.settings, args.apk):
+        if not required.exists():
+            print(f"Missing input: {required}")
+            return 2
+    for name in ("Item.json", "TextData-English.json", "Chance.json", "SkinData.json"):
+        if not (args.tables / name).is_file():
+            print(f"Missing table: {args.tables / name}")
+            return 2
+    DATA = args.out
+    ICON_DIR = DATA / "item_icons"
+    if args.streamed is not None:
+        IMPORT_ROOT = args.streamed / "import"
+        RAW_ROOT = args.streamed / "raw-assets"
+    EXTRA_ARCHIVES = [path for path in args.extra_apk if path.is_file()]
+    missing_extra = [str(path) for path in args.extra_apk if not path.is_file()]
+    if missing_extra:
+        print("Extra APK not found, continuing without it:", ", ".join(missing_extra))
+
+    names = load_names(args.tables)
+    items = read_table(args.tables, "Item.json")["Items"]
     ICON_DIR.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(apk_path) as apk:
+    with zipfile.ZipFile(args.apk) as apk:
         sprites = sprite_index(apk)
-        whole_images = whole_image_index(recovered)
+        whole_images = whole_image_index(args.settings)
         for extra in EXTRA_ARCHIVES:
-            if extra.is_file():
-                with zipfile.ZipFile(extra) as other:
-                    for name, value in sprite_index(other).items():
-                        sprites.setdefault(name, value)
+            with zipfile.ZipFile(extra) as other:
+                for name, value in sprite_index(other).items():
+                    sprites.setdefault(name, value)
         members = set(apk.namelist())
         textures: dict[str, Image.Image | None] = {}
         catalog = []
@@ -250,8 +286,8 @@ def main() -> int:
     lines += [f"{row['id']}\t{row['name']}\t{row['type']}\t{row['icon'] or '-'}" for row in catalog]
     (DATA / "ITEMS_LIST.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"items {len(catalog)}, icons {icons_written}, without icon {len(catalog) - icons_written}")
-    print(f"boxes {build_box_catalog(recovered, items)}")
-    print(f"skins {build_skin_catalog(recovered)}")
+    print(f"boxes {build_box_catalog(args.tables, items)}")
+    print(f"skins {build_skin_catalog(args.tables)}")
     return 0
 
 
