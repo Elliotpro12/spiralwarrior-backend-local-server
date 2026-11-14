@@ -33,6 +33,7 @@ from admin_mail import claim_mail
 import save_boxes as save_box
 import item_registry
 import task_periods as task_period
+import season_config
 import cosmetics as cosmetic
 import skins as part_skin
 import item_catalog
@@ -172,7 +173,8 @@ def normalize_db_task_state(raw=None):
     return state
 
 
-PERIODIC_TASK_TYPES = (3, 10)  # DailyStaticTask (Daily tab) and SeasonWeeklyTask (Weekly tab)
+SEASON_TASK_TYPE = 9  # SeasonStaticTask (Season tab): only sent while a season is open (season_config.py)
+PERIODIC_TASK_TYPES = (3, 9, 10)  # DailyStaticTask (Daily tab), SeasonStaticTask (Season tab), SeasonWeeklyTask (Weekly tab)
 
 
 def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels,
@@ -184,10 +186,14 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
     periodic=False: the other mission types, only rows with progress.
     """
     by_type = {}
+    game_now = game_time_seconds()
+    season_end = season_config.end_game_seconds(game_now)
     for task_id, task in TASK_CATALOG.items():
         task_type = int(task.get("taskType", -1))
         if task_type == LEVEL_TASK_TYPE or task["maxProcess"] <= 0:
             continue
+        if task_type == SEASON_TASK_TYPE and season_end <= 0:
+            continue  # no open season: the Season tab shows "This event is over"
         if (task_type in PERIODIC_TASK_TYPES) != periodic:
             continue
         if task_id == DAILY_STATIC_TASK_ID:
@@ -209,8 +215,12 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
                 protobuf_int(1, process) + protobuf_int(2, status) + protobuf_int(3, 0))))
             for task_id, process, status in entries
         )
-        # EndSymbol: next reset of a daily or weekly container (task_periods, UTC+8); 0 otherwise.
-        end_symbol = task_period.next_reset_game_seconds(task_type, game_time_seconds())
+        # EndSymbol: next reset of a daily or weekly container (task_periods, UTC+8);
+        # the open season's end for the season container; 0 otherwise.
+        if task_type == SEASON_TASK_TYPE:
+            end_symbol = season_end
+        else:
+            end_symbol = task_period.next_reset_game_seconds(task_type, game_now)
         task_list = task_entries + protobuf_int(2, end_symbol) + protobuf_int(3, 0)
         containers.append(protobuf_bytes(4, protobuf_int(1, task_type) + protobuf_bytes(2, task_list)))
     return containers

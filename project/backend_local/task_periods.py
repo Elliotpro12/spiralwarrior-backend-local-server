@@ -9,11 +9,14 @@ Inferred, not verified in game:
 - the reset offset is RESET_UTC_OFFSET_HOURS = +8: the client's day index and 2018 epoch use the server zone
   "+08:00" (project.js 240562, 206192-206199), so the daily boundary is 00:00 UTC+8.
 - weekly resets apply to the season weekly tasks (TaskData type 10) and the weekly static type (8).
+- the season static tasks (TaskData type 9) restart when the season id changes (season_config.py).
 """
 
 from __future__ import annotations
 
 from typing import Callable
+
+import season_config
 
 DAY_SECONDS = 86400
 GAME_EPOCH_UNIX = 1514736000
@@ -25,11 +28,14 @@ PERIODIC_KIND = {
     0: "daily",    # DailyRandomTask
     8: "weekly",   # WeeklyStaticTask
     10: "weekly",  # SeasonWeeklyTask
+    9: "season",   # SeasonStaticTask: restarts when the season id changes (season_config.py)
 }
 
 
 def period_index(kind: str, unix_now: int, offset_hours: int = RESET_UTC_OFFSET_HOURS) -> int:
     """Index of the current period in local time. 1970-01-01 was a Thursday, so weeks start Monday."""
+    if kind == "season":
+        return season_config.season_index(int(unix_now))
     days = (int(unix_now) + int(offset_hours) * 3600) // DAY_SECONDS
     if kind == "weekly":
         return (days + 3) // 7
@@ -38,9 +44,12 @@ def period_index(kind: str, unix_now: int, offset_hours: int = RESET_UTC_OFFSET_
 
 def next_reset_game_seconds(task_type: int, game_now: int,
                             offset_hours: int = RESET_UTC_OFFSET_HOURS) -> int:
-    """Game-second time of the next reset for a periodic task type, or 0 when it has none."""
+    """Game-second time of the next reset for a daily or weekly task type, or 0 otherwise.
+
+    The season end is not a fixed reset: the server takes it from season_config.
+    """
     kind = PERIODIC_KIND.get(int(task_type))
-    if kind is None:
+    if kind is None or kind == "season":
         return 0
     unix_now = int(game_now) + GAME_EPOCH_UNIX
     index = period_index(kind, unix_now, offset_hours)
