@@ -89,3 +89,25 @@ en el caso Survival (`response_bout_opr_for_request`).
   `data/accounts/2/profile.json`; la copia previa del perfil no está en el repo.
 - Logs de la partida: `logs/` (ignorados por Git) y `logcat` del emulador para los
   errores de JavaScript (`jswrapper: JS: [ERROR]`).
+
+## Estado tras la sesión de búsqueda (2026-11-16)
+
+Observado:
+- Survival entra con 200 de oro (la opción Free pide un anuncio, no soportado).
+- Tras el emparejamiento el juego muestra "All players found" y luego Exploring (rejilla de módulos).
+  El botón de flecha inferior derecha inicia la búsqueda ("Searching").
+- Reenviar la operación 23 en los ticks siguientes hace que la búsqueda termine una vez, pero el juego
+  vuelve a buscar y no envía la operación 24.
+- Llamar a `ChijiSearch.overSearch()` desde el juego (vía Frida, sin tocar el servidor) produce:
+  `TypeError: Cannot read property 'data' of undefined` en `dealPartKernAndTalent` (project.js ~12520),
+  llamado desde `MatchMgr.init` (~12507), con `players` = `getMatchPlayerArray()` de `_Race.RacePlayers`.
+
+Inferido (sin confirmar):
+- El cliente recorre `RacePlayerProto.ToyTopList` como diccionario (`z` en project.js ~185056) y usa la
+  clave como ID de pieza, pero la decodificación da un arreglo de contenedores `{idx, val}`. La forma que
+  espera el cliente no coincide con la que enviamos (ID de pieza como `idx`).
+- Hace falta leer `_Race.RacePlayers` tal como lo recibe el cliente para confirmarlo. Leer módulos internos
+  con `require` provoca SIGSEGV en el juego; no hacerlo.
+
+Pendiente: alinear `ToyTopList` con lo que el cliente espera, luego llegar a la ronda (12/13), eliminación
+(25) y fin (14), y contar RaceMark 1.

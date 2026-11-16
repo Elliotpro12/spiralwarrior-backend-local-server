@@ -4939,6 +4939,13 @@ class Handler(socketserver.BaseRequestHandler):
                 self.record("client_message", **summary)
                 if message_id == 131:
                     self.request.sendall(make_tick_reply())
+                    if getattr(self.app, "mpo_notify_pending", 0):
+                        # The module-report notice (23) can arrive before the search screen listens.
+                        # Resend it on the next few ticks so the search screen can finish.
+                        self.app.mpo_notify_pending = int(self.app.mpo_notify_pending) - 1
+                        self.request.sendall(make_bout_response(23))
+                        self.record("synthetic_mpo_notify_resend", response_id=142, bout_opr=23,
+                                    purpose="ChiJi search finishes only when the notice arrives after the search screen is up")
                     self.record("synthetic_tick_reply", request_id=131,
                                 response_id=132, body_bytes=0,
                                 purpose="acknowledge ECS_Tick so the client keeps its server session active")
@@ -5489,6 +5496,7 @@ class Handler(socketserver.BaseRequestHandler):
                             self.request.sendall(make_bout_response_with_param(20, SURVIVAL_PLAYER_COUNT))
                             # E_MPO_NOTIFY_REPORT_EQUIPMENT (23): the client opens its module grid and answers with bout 24.
                             self.request.sendall(make_bout_response(23))
+                            self.app.mpo_notify_pending = 5
                             self.record("synthetic_mpo_waiting_other_over", response_id=141,
                                         player_count=SURVIVAL_PLAYER_COUNT,
                                         purpose="client ChiJi match scene needs ChiJiRacePlayerNum")
