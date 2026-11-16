@@ -34,6 +34,7 @@
 !/project/backend_local/cosmetics.py
 !/project/backend_local/task_periods.py
 !/project/backend_local/season_config.py
+!/project/backend_local/shop_repair.py
 !/project/backend_local/item_registry.py
 !/project/backend_local/admin_locales.py
 !/project/backend_local/admin/

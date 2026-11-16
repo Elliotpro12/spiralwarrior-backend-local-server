@@ -33,6 +33,7 @@ from admin_mail import claim_mail
 import save_boxes as save_box
 import item_registry
 import task_periods as task_period
+import shop_repair
 import season_config
 import cosmetics as cosmetic
 import skins as part_skin
@@ -3660,6 +3661,16 @@ def make_login_success(player_id: int) -> bytes:
     return websocket_binary_frame(body)
 
 
+SHOP_OPR_REQUEST_ID = 137
+
+
+def make_shop_opr_response(ret: int) -> bytes:
+    """ESC_ShopOpr (138): SC_ShopOpr field 1 shopOprRet."""
+    proto = protobuf_int(1, int(ret))
+    body = struct.pack(">IH", 6 + len(proto), 138) + proto
+    return websocket_binary_frame(body)
+
+
 def make_bout_response(bout_opr: int) -> bytes:
     # Runtime schema confirms SC_BoutOpr.boutOpr is required field 1. In the
     # opening tutorial the client submits E_RACE_GUIDE_WIN (6) after its local
@@ -4559,6 +4570,31 @@ class Handler(socketserver.BaseRequestHandler):
                     param1=param1, item_opr_ret=ret,
                     purpose="buy a part skin with its price, or equip an owned skin on a top part")
 
+    def handle_shop_opr(self, body: bytes) -> None:
+        """ECS_ShopOpr (137): buy a repair kit good (Store > Packs > Launcher > Repair Kits)."""
+        values = protobuf_varint_values(body)
+        goods_id = int32_value(values.get(3, 0))
+        goods_num = int32_value(values.get(4, 0))
+        cost_type = int32_value(values.get(5, 0))
+        table = shop_repair.load_table()
+        plan = None
+        with self.app.roguelike_lock:
+            refresh_shared_profile_state(self.app)
+            ret, plan = shop_repair.plan_purchase(goods_id, goods_num, self.app.inventory_items, table)
+            if plan:
+                self.app.inventory_items[plan["cost_id"]] = int(self.app.inventory_items.get(plan["cost_id"], 0)) - plan["cost"]
+                self.app.inventory_items[plan["item_id"]] = int(self.app.inventory_items.get(plan["item_id"], 0)) + plan["grant"]
+                increment_level_task_counters(self.app.progression_counters, 19, 1)  # BuyNum: repair kit purchase
+                save_profile_state(self.app)
+        shop_repair.capture(goods_id, goods_num, cost_type, ret)
+        if plan:
+            self.request.sendall(make_app_player_data_sync(self.app))
+        self.request.sendall(make_shop_opr_response(ret))
+        self.record("synthetic_shop_opr", request_id=SHOP_OPR_REQUEST_ID,
+                    goods_id=goods_id, goods_num=goods_num, cost_type=cost_type,
+                    shop_opr_ret=ret, known_goods=bool(table),
+                    purpose="repair kit purchase; goods table is captured from the game")
+
     def handle_cosmetic_opr(self, body: bytes) -> None:
         """ECS_InformationOpr for avatar, frame, chat bubble, battle scene and card skin (cosmetics.py)."""
         values = protobuf_varint_values(body)
@@ -5032,6 +5068,8 @@ class Handler(socketserver.BaseRequestHandler):
                     self.handle_create_club(frame[6:])
                 elif message_id == ECS_FILTER_CLUB:
                     self.handle_filter_club(frame[6:])
+                elif message_id == 137:
+                    self.handle_shop_opr(frame[6:])
                 elif message_id == 135 and self.is_save_box_request(frame[6:]):
                     self.handle_save_box_opr(frame[6:])
                 elif message_id == 135 and int32_value(protobuf_varint_values(frame[6:]).get(1, 0)) in (part_skin.OPR_USE_SKIN, part_skin.OPR_BUY_SKIN):
