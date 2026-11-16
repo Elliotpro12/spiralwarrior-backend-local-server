@@ -111,3 +111,28 @@ Inferido (sin confirmar):
 
 Pendiente: alinear `ToyTopList` con lo que el cliente espera, luego llegar a la ronda (12/13), eliminación
 (25) y fin (14), y contar RaceMark 1.
+
+## Resultado: batalla Survival completa (2026-11-16)
+
+Observado en el juego (cuenta de prueba):
+- Entrada a Novice Arena (200 de oro), búsqueda, Exploring, combate con rondas (12/13) y fin de partida (14).
+- Pantalla de resultado "One more try" con victoria y ranking 0/81.
+- Fila de Trade Introduction "Complete 1 Survival Mode battles" pasa a 1/1 y el grupo se reclama:
+  GP 20 → 25, nivel 5 → 6, intercambio 1280716853 con `success: true`.
+
+Lo que hizo funcionar la batalla (cambios en ws_probe_server.py):
+- Rival con tres tops completos: PartAs 1/2/3 con piezas de Behemoth (2001-2003), Athena (2004-2006)
+  y Kaguyahime (2028-2030). El selector de tops recorre tres posiciones en orden aleatorio.
+- MainTop del rival = 1 (índice del top líder, base 1; el cliente resta 1).
+- Operación 13 (fin de ronda) y 4 (tick) respondidas con eco; 14 (fin de partida) respondida con
+  SC_BoutOpr {boutOpr 14, WinChair} usando el ganador que envía el cliente (param2).
+- Tras contar la batalla se envía la sincronización de tareas, para que la fila se actualice.
+
+Contadores:
+- RaceOver de MPO (RaceMarks 1) = clave `condition:0:0:3:race:1`. Las filas de Trade Introduction
+  (1278227764) y de temporada (1112551986, máximo 20) comparten esa clave.
+
+Pendiente:
+- Fila de temporada: 1 de 20 batallas.
+- Recompensas de la batalla (RaceReward) y mail de premios: no verificados.
+- Derrotas y eliminación (25) no probadas: la partida probada terminó con victoria.

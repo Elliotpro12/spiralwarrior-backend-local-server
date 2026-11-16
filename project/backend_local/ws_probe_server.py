@@ -3664,6 +3664,13 @@ def make_login_success(player_id: int) -> bytes:
 SHOP_OPR_REQUEST_ID = 137
 
 
+def make_race_end_response(win_chair: int) -> bytes:
+    """ESC_BoutOpr (140) for E_RACE_END: boutOpr 14 and WinChair (field 5, SC_BoutOpr)."""
+    proto = protobuf_int(1, 14) + protobuf_int(5, int(win_chair))
+    body = struct.pack(">IH", 6 + len(proto), 140) + proto
+    return websocket_binary_frame(body)
+
+
 def make_shop_opr_response(ret: int) -> bytes:
     """ESC_ShopOpr (138): SC_ShopOpr field 1 shopOprRet."""
     proto = protobuf_int(1, int(ret))
@@ -3859,15 +3866,17 @@ def make_race_state_sync(race_id: int, race_type: int,
             protobuf_string(2, nickname),
             protobuf_int(3, level),
             protobuf_int(4, 0),  # Score
-            protobuf_int(5, 2001),  # MainTop: verified starter part
+            protobuf_int(5, 1),  # MainTop: 1-based toy top index (client leaderIndex = MainTop - 1), not a part id
             protobuf_int(7, 0),  # Emitter
             protobuf_int(8, 1),  # EmitterStar
             # RacePlayerProto.ToyTopList (field 15): ContainerIntToytopPartProto idx=part id, val=ToytopPartProto
-            # {1 Level, 3 PartAs (1 Top, 2 Mid, 3 Bot)}. Starter parts 2001, 2002, 2003 as in owned_part.
-            # Without it the client's match roster has no tops and ChooseUI9V9.dealUpDownShow throws.
+            # {1 Level, 3 PartAs}. The client groups parts by PartAs into one toy top each, and the choose
+            # screen indexes three tops per rival (random order 0..2), so the rival gets three complete tops:
+            # PartAs 1 = Behemoth 2001-2003, 2 = Athena 2004-2006, 3 = Kaguyahime 2028-2030 (starter parts).
             *(protobuf_bytes(15, protobuf_int(1, part_id) + protobuf_bytes(2, protobuf_int(1, 1)
-                                                                          + protobuf_int(3, part_as)))
-              for part_id, part_as in ((2001, 1), (2002, 2), (2003, 3))),
+                                                                          + protobuf_int(3, top_no)))
+              for top_no, part_ids in ((1, (2001, 2002, 2003)), (2, (2004, 2005, 2006)), (3, (2028, 2029, 2030)))
+              for part_id in part_ids),
         ))
         container = (protobuf_int(1, seat)
                      + protobuf_bytes(2, race_player))
@@ -4240,6 +4249,8 @@ def response_bout_opr_for_request(requested_bout_opr: int,
         return 4
     if requested_bout_opr == 12 and race_type == 3:  # E_BOUT_BEGIN sent by the client for the Survival bout
         return 12
+    if requested_bout_opr == 13 and race_type == 3:  # E_BOUT_END at the end of a Survival round: echo, the client leaves the round
+        return 13
     return 0
 
 
@@ -5489,6 +5500,21 @@ class Handler(socketserver.BaseRequestHandler):
                         self.record("synthetic_champion_result_saved", response_id=140,
                                     won=bool(win_flag), league_index=league_index,
                                     purpose="persist Super Championship record and resync RaceHistory")
+                    elif requested_bout_opr == 14 and race_type == 3:
+                        # E_RACE_END (Survival): the client sends its computed winner in param2 (field 4).
+                        # Echo it so the result screen matches, and count the battle for MPO (RaceMarks 1).
+                        win_chair = int32_value(bout_values.get(4, 0))
+                        with self.app.roguelike_lock:
+                            refresh_shared_profile_state(self.app)
+                            increment_level_task_counters(self.app.progression_counters, 0, race_mark=1)
+                            save_profile_state(self.app)
+                            task_sync = make_app_player_data_sync(self.app)
+                        # Send the task state so the Survival rows (level task and season) update in game.
+                        self.request.sendall(task_sync)
+                        self.request.sendall(make_race_end_response(win_chair))
+                        self.record("synthetic_survival_race_end", request_id=139, response_id=140,
+                                    win_chair=win_chair, race_type=race_type,
+                                    purpose="Survival battle ends; RaceOver counter for MPO (RaceMarks 1)")
                     else:
                         self.request.sendall(make_bout_response(response_bout_opr))
                         if response_bout_opr == 10 and race_type == 3:
