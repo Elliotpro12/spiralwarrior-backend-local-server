@@ -36,6 +36,8 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_NOTICE = ROOT / "notices" / "NoticeEng.txt"
 DEFAULT_PROFILE_STATE = ROOT / "data" / "local_profile_state.json"
 DEFAULT_FREE_PURCHASE_CATALOG = ROOT / "data" / "local_free_purchase_catalog.json"
+BUY_TASK_CONDITION = 19  # TaskData condition BuyNum (client row "Purchase parts or repair kits")
+REPAIR_KIT_IDS = frozenset(range(1127298609, 1127298615))  # item "Repair" (client Item table)
 
 
 def read_bytes(path: Path) -> bytes:
@@ -70,6 +72,21 @@ def _utc_bucket(limit_type: int, now: datetime) -> str | None:
     if limit_type == 3:
         return "month:" + now.strftime("%Y-%m")
     return "lifetime"
+
+
+def _count_purchase_for_tasks(profile: dict, delivery: dict[int, int]) -> None:
+    """Count a purchase of repair kits or parts toward the BuyNum task condition (19).
+
+    Client rows "Purchase parts or repair kits N time(s)" (TaskData condition 19) count
+    purchases that deliver a Repair item or a part. One successful purchase adds one.
+    """
+    if not any(quantity > 0 and (item_id in REPAIR_KIT_IDS
+                                 or item_registry.destination_for(item_id) == "part_fragments")
+               for item_id, quantity in delivery.items()):
+        return
+    import ws_probe_server  # local import: the WebSocket module loads the task catalog
+    counters = profile.setdefault("progression_counters", {})
+    ws_probe_server.increment_level_task_counters(counters, BUY_TASK_CONDITION, 1)
 
 
 def claim_local_free_purchase(app: argparse.Namespace, product_id: int, nonce: str) -> tuple[int, dict]:
@@ -121,6 +138,7 @@ def claim_local_free_purchase(app: argparse.Namespace, product_id: int, nonce: s
         for item_id, quantity in delivery.items():
             inventory[str(item_id)] = inventory.get(str(item_id), 0) + quantity
         profile["inventory_items"] = inventory
+        _count_purchase_for_tasks(profile, delivery)
 
         if limit_key:
             limits[limit_key] = count + 1
