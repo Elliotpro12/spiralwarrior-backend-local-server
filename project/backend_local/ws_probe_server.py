@@ -2562,7 +2562,8 @@ def make_player_level_sync(*, level: int, exp: int, power: int, task_score: int,
                            inventory_items: dict[int, int],
                            level_task_state: dict[str, object] | None = None,
                            progression_counters: dict[str, object] | None = None,
-                           part_levels: dict[int, int] | None = None) -> bytes:
+                           part_levels: dict[int, int] | None = None,
+                           db_task_state: dict[str, object] | None = None) -> bytes:
     """Send an authoritative progression update and the next level's tasks."""
     base_info = b"".join((
         protobuf_int(3, max(1, int(level))),
@@ -5599,6 +5600,7 @@ class Handler(socketserver.BaseRequestHandler):
                             level_task_state=self.app.level_task_state,
                             progression_counters=self.app.progression_counters,
                             part_levels=self.app.part_levels,
+                            db_task_state=normalize_db_task_state(getattr(self.app, "db_task_state", None)),
                         ))
                     self.record("synthetic_roguelike_enter_map", request_id=181,
                                 response_id=180, chapter_id=chapter_id,
@@ -5877,6 +5879,7 @@ class Handler(socketserver.BaseRequestHandler):
                             level_task_state=self.app.level_task_state,
                             progression_counters=self.app.progression_counters,
                             part_levels=self.app.part_levels,
+                            db_task_state=normalize_db_task_state(getattr(self.app, "db_task_state", None)),
                         ))
                     self.request.sendall(make_task_opr_response(task_opr_ret, task_id))
                     self.record("synthetic_task_opr_response", request_id=144,
