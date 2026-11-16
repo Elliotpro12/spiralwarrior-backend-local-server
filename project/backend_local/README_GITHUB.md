@@ -7,13 +7,25 @@ This is a community compatibility backend for local testing. **It is not the ori
 - Local username/email accounts, test sessions, and separate player profiles.
 - HTTP routes for login, local notices, test purchases, mail, and synthetic ranking responses.
 - A WebSocket server with profile synchronization and partial handlers for Adventure, rewards, inventory/parts, some GP operations, the PvE campaign, and Lottery.
+- Daily and weekly missions with resets at 00:00 UTC+8, including the daily login claim. Rewards for item types that grant player experience and club score are credited to the profile or the player's club.
+- A Season missions window that the admin panel opens and closes. Only part of the Season rows are counted by the server (see Known gaps).
+- An admin panel at `/admin` for sending mail with item attachments, editing the notice board, opening and closing a season, reviewing history, and managing interface languages.
+- Item classification tools (`tools/`) that build the local catalogs from a copy of the client you are authorized to inspect.
 - Local persistence using SQLite for accounts and JSON files for profiles.
 
 Research reports document the evidence for each flow. A handler or synthetic response does not prove that the original server behaved the same way.
 
 ## Known gaps
 
-Level and GP progression are incomplete. Some PvE routes and rewards are missing; ad rewards are still in progress; Lottery needs a complete test through the game interface; and Friend/Chat are outside the confirmed protocol. Ranking and mail are test fixtures. Rates, caps, and eligibility rules remain unknown for several systems.
+Level and GP progression are incomplete. Experience does not raise the player level yet. Some PvE routes and rewards are missing; ad rewards are still in progress; Lottery needs a complete test through the game interface; and Friend/Chat are outside the confirmed protocol. Ranking and mail are test fixtures. Rates, caps, and eligibility rules remain unknown for several systems.
+
+### Missions and seasons
+
+- **Daily and weekly missions** are restored and reset at 00:00 UTC+8. The reset offset comes from the client's server time zone setting. The daily login claim works in the game, and the daily and weekly rows appear with a countdown.
+- **Season missions** (TaskData type 9) appear only while the admin panel has a season open. The length is set by the administrator because the client files do not state it.
+- **Season coverage:** the server counts 8 of the 17 Season rows. The rest depend on systems that are not implemented: part use in battle, Kern and microchip upgrades, the PvE Tower of Trials, Lucky Card tickets, club donations, and Survival battles.
+- **Survival (MPO):** entry, the module tutorial, and the match loading screen work on the local backend, but battles do not finish. Rounds, end of battle, and the Survival battle counter are not implemented. See [`SURVIVAL_MODE_NOTES.md`](SURVIVAL_MODE_NOTES.md) for the protocol notes and the open blocker.
+- **Warrior Pass** (Season pass rewards and its experience counter) is not implemented.
 
 ## Run the backend
 
@@ -92,6 +104,26 @@ Get-NetFirewallRule -DisplayName 'Spiral Warrior LAN beta backend' -ErrorAction 
 
 LAN mode does not use HTTPS and must not be exposed to the internet. Passwords and sessions in this build are for testing; do not use real accounts.
 
+## Admin panel
+
+The admin panel is disabled until you set a token. Set the token in an environment variable before you start the server; do not write it into a file in the repository:
+
+```powershell
+$env:SPIRAL_ADMIN_TOKEN = "choose-a-long-random-token"
+python project/backend_local/run_local_server.py
+```
+
+Then open `http://127.0.0.1:18765/admin` in a browser on this PC and enter the token. The page can:
+
+- **Send mail** to all accounts or to listed player IDs, with up to 10 item attachments per mail. Items must exist in the local catalog.
+- **Item list:** search the catalog by name, ID, or category.
+- **Notice board:** edit the text players see, and review earlier versions.
+- **Seasons:** start a season with a name and a length in days (1 to 366), or end the current one now. Starting a season resets only the season mission progress.
+- **Settings:** choose the interface language and add or edit languages; the built-in languages are English and Español.
+- **History:** review mail and notices sent.
+
+The admin API rejects requests without the token. Do not expose the admin port outside the local network.
+
 ## Catalogs and local files
 
 Client catalogs in `data/*.json`, databases, profiles, logs, and experimental responses are not distributed. See [`data/README.md`](data/README.md). The `experiments/area-list-localhost.base64` fixture is included because it is a synthetic response created for local testing, not a capture from the original server.
@@ -100,11 +132,18 @@ The server starts without `data/local_free_purchase_catalog.json`; it prints a w
 
 ## Components
 
-- `server.py`: local HTTP routes.
+- `server.py`: local HTTP routes and the admin API.
 - `ws_probe_server.py`: local WebSocket protocol handlers.
 - `account_store.py`: accounts, hashed credentials, and test sessions.
 - `mail_fixture.py`: synthetic mail state.
+- `admin_mail.py`, `admin_locales.py`: admin mail validation and language packs.
+- `season_config.py`: the admin-controlled Season window (`data/season.json`).
+- `task_periods.py`: daily and weekly reset periods.
+- `save_boxes.py`: saved box slots (up to 4, as the client shows them).
+- `item_registry.py`, `item_catalog.py`: item classification and catalog loading.
+- `club_store.py`: local clubs and club score.
 - `run_local_server.py`: local and LAN launcher.
+- `tools/`: catalog build and classification tools; see [`tools/README.md`](tools/README.md).
 
 The server implements only observed contracts or behavior clearly marked as synthetic; unsupported methods are rejected. Do not configure a public instance without completing authentication, encrypted transport, operational security, validation, and data review.
 
