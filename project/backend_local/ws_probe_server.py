@@ -17,6 +17,7 @@ import hashlib
 import json
 import secrets
 import socketserver
+import random
 import struct
 import threading
 import time
@@ -2288,10 +2289,27 @@ def websocket_binary_frame(payload: bytes) -> bytes:
 LOCAL_MAX_SUB_CHANNEL = 1
 
 
+def ensure_merchant_picks(app, unix_now: int | None = None) -> None:
+    """Roll the Merchant goods once per daily period (the client's reset is 00:00 UTC+8)."""
+    now = int(time.time()) if unix_now is None else int(unix_now)
+    day = task_period.period_index("daily", now)
+    cosmetics_state = app.cosmetics
+    level = int(getattr(app, "level", 1))
+    current = cosmetics_state.get("shop_picks", {}).get("1") or []
+    if cosmetics_state.get("shop_picks_day") == day and current and all(
+            shop_static.row_level_ok(pick, level) for pick in current):
+        return
+    picks = shop_static.roll_merchant_picks(list(shop_static.cached_items()), random.Random(),
+                                            level=int(getattr(app, "level", 1)))
+    cosmetics_state["shop_picks"] = {"1": picks}
+    cosmetics_state["shop_picks_day"] = day
+
+
 def make_public_svr_sync(server_time: int | None = None,
                          session_token: str | None = None,
                          public_http_url: str = "http://127.0.0.1:18765",
-                         public_ws_url: str = "ws://127.0.0.1:18766") -> bytes:
+                         public_ws_url: str = "ws://127.0.0.1:18766",
+                         daily_picks: dict | None = None) -> bytes:
     # ClientProtoRegistor.handler[2] is PlayerInfoProto. SysInfo is field 1
     # with ServerTime at field 1; PublicSvr is field 12 and fields 1-4 are
     # Url, Id, Token and WsUrl. ServerTime shares the client's 2018 epoch.
@@ -2314,7 +2332,7 @@ def make_public_svr_sync(server_time: int | None = None,
     # PlayerInfoProto.DailyShop=2 (NetDailyShopProto.NextUpdateTime=1, game seconds): the client
     # reads it for the Daily Missions countdown (SyncDataManager.getNextUpdateTime).
     next_daily_reset = task_period.next_reset_game_seconds(3, server_time)
-    daily_shop = shop_static.build_daily_shop(next_daily_reset, list(shop_static.cached_items()))
+    daily_shop = shop_static.build_daily_shop(next_daily_reset, list(shop_static.cached_items()), daily_picks)
     player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, daily_shop)
                    + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
     body = struct.pack(">IH", 6 + len(player_info), 2) + player_info
@@ -5133,11 +5151,13 @@ class Handler(socketserver.BaseRequestHandler):
                                 guide_step_source="per-player local profile; 0 preserves the original client tutorial")
                     time.sleep(0.05)
                     server_time = game_time_seconds()
+                    ensure_merchant_picks(self.app)
                     self.request.sendall(make_public_svr_sync(
                         server_time,
                         session_token=getattr(self.app, "session_token", None),
                         public_http_url=self.app.public_http_url,
                         public_ws_url=self.app.public_ws_url,
+                        daily_picks=self.app.cosmetics.get("shop_picks"),
                     ))
                     self.request.sendall(make_all_static_shop_sync())
                     self.record("synthetic_all_static_shop_sync", message_id=3,
@@ -5429,6 +5449,38 @@ class Handler(socketserver.BaseRequestHandler):
                                     reported_mask=i_param,
                                     guide_step=int(self.app.guide_step),
                                     purpose="persist the client's native GuideMark progress per account")
+                    elif opr_type == 22:  # E_INFO_OPR_UPDATE_SHOP_PAGE: Merchant random refresh (200 diamonds)
+                        with self.app.roguelike_lock:
+                            refresh_shared_profile_state(self.app)
+                            diamonds = int(self.app.inventory_items.get(DIAMOND_ITEM_ID, 0))
+                            if i_param != shop_static.MERCHANT_PAGE:
+                                rejection_reason = "only the Merchant page has a random roll"
+                            elif diamonds < shop_static.MERCHANT_REFRESH_DIAMOND:
+                                rejection_reason = "not enough diamonds"
+                            else:
+                                self.app.inventory_items[DIAMOND_ITEM_ID] = diamonds - shop_static.MERCHANT_REFRESH_DIAMOND
+                                picks = shop_static.roll_merchant_picks(
+                                    list(shop_static.cached_items()), random.Random(),
+                                    level=int(getattr(self.app, "level", 1)))
+                                self.app.cosmetics["shop_picks"] = {str(shop_static.MERCHANT_PAGE): picks}
+                                self.app.cosmetics["shop_picks_day"] = task_period.period_index(
+                                    "daily", int(time.time()))
+                                save_profile_state(self.app)
+                                accepted = True
+                                lineup_player_sync = (
+                                    make_app_player_data_sync(self.app)
+                                    + make_public_svr_sync(
+                                        game_time_seconds(),
+                                        session_token=getattr(self.app, "session_token", None),
+                                        public_http_url=self.app.public_http_url,
+                                        public_ws_url=self.app.public_ws_url,
+                                        daily_picks=self.app.cosmetics.get("shop_picks"),
+                                    )
+                                )
+                        self.record("synthetic_merchant_refresh", request_id=159, opr_type=opr_type,
+                                    accepted=accepted, rejection_reason=rejection_reason,
+                                    picks=(self.app.cosmetics.get("shop_picks", {}) or {}).get("1"),
+                                    purpose="Merchant refresh: random goods for 200 diamonds")
                     elif opr_type in (12, 20, 21):
                         # E_INFO_OPR_LINEUP_EMITTER, REPORT_FRIEND_NUM, and
                         # REPORT_MAX_POWER are state/report notifications; the

@@ -42,10 +42,15 @@ def default_cosmetics() -> dict[str, int]:
 def normalize_cosmetics(raw: object) -> dict:
     state: dict = default_cosmetics()
     state["owned_scenes"] = []
+    state["shop_picks"] = {}  # Merchant random roll: page -> row ids, kept for the current daily period
+    state["shop_picks_day"] = 0
     if isinstance(raw, dict):
         for field in FIELDS:
             state[field] = max(0, int(raw.get(field, 0) or 0))
         state["owned_scenes"] = sorted({int(x) for x in raw.get("owned_scenes", []) or [] if int(x) > 0})
+        picks = raw.get("shop_picks") if isinstance(raw.get("shop_picks"), dict) else {}
+        state["shop_picks"] = {str(k): [int(x) for x in v] for k, v in picks.items() if isinstance(v, list)}
+        state["shop_picks_day"] = int(raw.get("shop_picks_day", 0) or 0)
     return state
 
 
