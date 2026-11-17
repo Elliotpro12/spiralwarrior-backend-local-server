@@ -39,12 +39,23 @@ def default_cosmetics() -> dict[str, int]:
     return {field: 0 for field in FIELDS}
 
 
-def normalize_cosmetics(raw: object) -> dict[str, int]:
-    state = default_cosmetics()
+def normalize_cosmetics(raw: object) -> dict:
+    state: dict = default_cosmetics()
+    state["owned_scenes"] = []
     if isinstance(raw, dict):
         for field in FIELDS:
             state[field] = max(0, int(raw.get(field, 0) or 0))
+        state["owned_scenes"] = sorted({int(x) for x in raw.get("owned_scenes", []) or [] if int(x) > 0})
     return state
+
+
+def grant_scene(state: dict, scene_id: int) -> bool:
+    """Own a battle scene for good. Returns True when it was not owned before."""
+    owned = set(int(x) for x in state.get("owned_scenes", []))
+    if int(scene_id) in owned:
+        return False
+    state["owned_scenes"] = sorted(owned | {int(scene_id)})
+    return True
 
 
 def target_field(opr: int, item_type: int) -> str | None:

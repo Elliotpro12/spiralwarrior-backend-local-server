@@ -2790,6 +2790,17 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
             # missing from DefaultItems (e.g. a spent lottery ticket still showed 1).
             item_count = protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity))
             base_info += protobuf_bytes(22, item_count)
+    # BaseInfo.Scenes is repeated ContainerIntTryItemProto at field 60: idx=scene item id,
+    # val=TryItemProto{TryOverTime=1}. TryOverTime 0 means the scene is owned for good
+    # (CanTryItem: the entry exists and x(TryOverTime) is false).
+    scene_ids = set(int(x) for x in ((cosmetics or {}).get("owned_scenes", []) or []))
+    # A scene item in the inventory is owned too (covers purchases made before owned_scenes existed).
+    scene_ids |= {int(item_id) for item_id, quantity in inventory_items.items()
+                  if int(quantity) > 0 and int(item_registry.registry().get(int(item_id), {}).get("type", -1))
+                  == cosmetic.TYPE_SCENE}
+    for scene_id in sorted(scene_ids):
+        base_info += protobuf_bytes(60, protobuf_int(1, int(scene_id))
+                                    + protobuf_bytes(2, protobuf_int(1, 0)))
     # Type-25 currencies (Arcane Crystal, Blazar Matrix, Lucky Star...) are read by the client from
     # BaseInfo.Currency (repeated ContainerIntIntProto at field 55), not from DefaultItems.
     for currency_id in sorted(item_registry.currency_ids()):
@@ -4650,7 +4661,10 @@ class Handler(socketserver.BaseRequestHandler):
             for currency, amount in prices:
                 self.app.inventory_items[currency] = int(self.app.inventory_items.get(currency, 0)) - amount
             for item_id, quantity in shop_static.reward_lines(row, goods_num):
-                credit_profile_item_reward(self.app, item_id, quantity)
+                if int(item_registry.registry().get(int(item_id), {}).get("type", -1)) == cosmetic.TYPE_SCENE:
+                    cosmetic.grant_scene(self.app.cosmetics, item_id)  # a battle scene is owned, not stacked
+                else:
+                    credit_profile_item_reward(self.app, item_id, quantity)
             if limit_key:
                 limits[limit_key] = used + int(goods_num)
             increment_level_task_counters(self.app.progression_counters, 19, 1)  # BuyNum: one purchase
