@@ -126,8 +126,10 @@ def roll_merchant_picks(items: list[dict], rng, level: int | None = None) -> lis
     Only goods whose limitLevel is at or below `level` are offered."""
     rarity = item_rarity()
     pool = sorted(merchant_pool(items), key=lambda x: int(x["Id"]))
-    if level is not None:  # goods above the player's level cannot be bought (SC_ShopOpr 5)
-        pool = [r for r in pool if int(r.get("limitLevel", 0) or 0) <= int(level)]
+    slots = merchant_slots(level) if level is not None else DAILY_SLOTS_PER_PAGE
+    if level is not None:  # goods above the player's GP cannot be bought (SC_ShopOpr 5 'GP not high enough')
+        gp = gp_for_level(level)
+        pool = [r for r in pool if int(r.get("limitLevel", 0) or 0) <= gp]
 
     def part_of(row: dict) -> int:
         return int(row["ItemList"][0]["ID"]) if row.get("ItemList") else 0
@@ -136,7 +138,7 @@ def roll_merchant_picks(items: list[dict], rng, level: int | None = None) -> lis
     normal = [r for r in pool if rarity.get(part_of(r)) != ASCENDED_RARITY]
     picks: list[int] = []
     used_parts: set[int] = set()
-    for _ in range(DAILY_SLOTS_PER_PAGE - 1):
+    for _ in range(slots - 1):
         choices = [r for r in normal if part_of(r) not in used_parts]
         if not choices:
             break
@@ -145,7 +147,7 @@ def roll_merchant_picks(items: list[dict], rng, level: int | None = None) -> lis
         used_parts.add(part_of(row))
     last_pool = ascended if (ascended and rng.random() < 0.01) else normal
     choices = [r for r in last_pool if part_of(r) not in used_parts] or last_pool
-    if choices:
+    if choices and slots > 0:
         picks.append(int(rng.choice(choices)["Id"]))
     return picks
 
@@ -250,22 +252,23 @@ def limit_bucket(limit_type: int, unix_now: int) -> str | None:
 
 
 def row_level_ok(row_id: int, level: int) -> bool:
-    """True when the ShopItem row exists and its limitLevel is at or below the player's level."""
+    """True when the ShopItem row exists and its limitLevel (a GP requirement) is at or below the player's GP."""
     row = item_by_id().get(int(row_id))
-    return row is not None and int(row.get("limitLevel", 0) or 0) <= int(level)
+    return row is not None and int(row.get("limitLevel", 0) or 0) <= gp_for_level(level)
 
 
 REFRESH_PAGES = (1, 2, 3, 4, 5)  # tabs with a refresh button: Merchant, Adventure, Challenge, Blazar, Magic Lottery
 
 
 def page_pool(items: list[dict], page: int, level: int | None = None) -> list[dict]:
-    """Priced daily rows of one shop page, optionally limited to the player's level."""
+    """Priced daily rows of one shop page, optionally limited to the GP of the player's level."""
     rows = [x for x in items
             if int(x.get("shopType", -1)) == 0 and int(x.get("pageIdx", -1)) == int(page)
             and (int(x.get("diamond", 0)) > 0 or int(x.get("gold", 0)) > 0
                  or int(x.get("TimeSlider", 0)) > 0 or x.get("Worth"))]
     if level is not None:
-        rows = [r for r in rows if int(r.get("limitLevel", 0) or 0) <= int(level)]
+        gp = gp_for_level(level)
+        rows = [r for r in rows if int(r.get("limitLevel", 0) or 0) <= gp]
     return sorted(rows, key=lambda r: int(r["Id"]))
 
 
@@ -275,6 +278,7 @@ def roll_page_picks(items: list[dict], rng, page: int, level: int | None = None)
     if int(page) == MERCHANT_PAGE:
         return roll_merchant_picks(items, rng, level=level)
     pool = page_pool(items, page, level)
+    slots = DAILY_SLOTS_PER_PAGE
     picked: list[int] = []
     used: set[int] = set()
     for row in rng.sample(pool, len(pool)):
@@ -283,7 +287,7 @@ def roll_page_picks(items: list[dict], rng, page: int, level: int | None = None)
             continue
         used.add(reward)
         picked.append(int(row["Id"]))
-        if len(picked) == DAILY_SLOTS_PER_PAGE:
+        if len(picked) == slots:
             break
     return picked
 
@@ -314,4 +318,33 @@ def limit_events(limits: dict | None, unix_now: int) -> dict[int, dict[int, int]
             continue
         out.setdefault(type_of[kind], {})[int(parts[1])] = int(times)
     return out
+
+
+LEVEL_OPEN_PATH = DATA_PATH.with_name("level_open.json")  # level -> levelGPA (GP) and maxDailyShopNum
+
+
+@functools.lru_cache(maxsize=1)
+def _level_rows() -> dict[int, dict]:
+    try:
+        rows = json.loads(LEVEL_OPEN_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {int(row["Id"]): row for row in rows}
+
+
+def gp_for_level(level: int) -> int:
+    """GP of a player level (client Sync_LevelInfo.levelGPA). Shop goods' limitLevel is compared to this."""
+    row = _level_rows().get(int(level))
+    if row is None:
+        return max(_level_rows(), default=0) and int(_level_rows()[max(_level_rows())]["levelGPA"])
+    return int(row["levelGPA"])
+
+
+def merchant_slots(level: int) -> int:
+    """Open Merchant positions at this level (maxDailyShopNum). The rest show 'Unlock at N GP'."""
+    rows = _level_rows()
+    row = rows.get(int(level))
+    if row is None:
+        return DAILY_SLOTS_PER_PAGE
+    return max(1, min(DAILY_SLOTS_PER_PAGE, int(row["maxDailyShopNum"])))
 

@@ -2301,7 +2301,9 @@ def ensure_shop_picks(app, unix_now: int | None = None) -> None:
     changed = False
     for page in shop_static.REFRESH_PAGES:
         current = picks.get(str(page)) or []
-        if same_day and current and all(shop_static.row_level_ok(row, level) for row in current):
+        expected = shop_static.merchant_slots(level) if page == shop_static.MERCHANT_PAGE else len(current)
+        if (same_day and current and len(current) == expected
+                and all(shop_static.row_level_ok(row, level) for row in current)):
             continue
         picks[str(page)] = shop_static.roll_page_picks(list(shop_static.cached_items()), random.Random(), page, level)
         changed = True
@@ -4676,7 +4678,8 @@ class Handler(socketserver.BaseRequestHandler):
             return shop_static.RET_INVALID_GOODS
         with self.app.roguelike_lock:
             refresh_shared_profile_state(self.app)
-            if int(getattr(self.app, "level", 1)) < int(row.get("limitLevel", 0) or 0):
+            # limitLevel is a GP requirement (client ERROR_ITEMRET_NEED_PLAYERLEVEL: "Your GP is not high enough").
+            if shop_static.gp_for_level(int(getattr(self.app, "level", 1))) < int(row.get("limitLevel", 0) or 0):
                 return shop_static.RET_LEVEL_LIMIT
             limits = self.app.local_purchases.setdefault("limits", {})
             bucket = shop_static.limit_bucket(int(row.get("LimitType", 0)), int(time.time()))
