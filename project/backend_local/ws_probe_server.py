@@ -2668,7 +2668,7 @@ def make_pve_info_proto(pve_info: dict[str, object] | None = None) -> bytes:
     return proto
 
 
-def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
+def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, nickname: str = "Local Test",
                           roguelike_key_num: int = TEST_ROGUELIKE_KEYS,
                           roguelike_search_points: dict[int, int] | None = None,
                           roguelike_key_ad_claimed: bool = False,
@@ -2893,6 +2893,12 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
             player_data += protobuf_bytes(7, entry)  # PlayerData.ChapterReward.
     if level_task_container:
         player_data += protobuf_bytes(4, level_task_container)
+    # PlayerData.LimitEvents (field 20): ContainerIntLimitEventProto idx=LimitType, val=LimitEventProto
+    # whose ShopItemTimes (field 3) is ContainerIntIntProto idx=goods id, val=times bought this period.
+    for limit_type, goods_times in sorted((limit_events or {}).items()):
+        event = b"".join(protobuf_bytes(3, protobuf_int(1, goods) + protobuf_int(2, times))
+                         for goods, times in sorted(goods_times.items()))
+        player_data += protobuf_bytes(20, protobuf_int(1, int(limit_type)) + protobuf_bytes(2, event))
     body = struct.pack(">IH", 6 + len(player_data), 1) + player_data
     return websocket_binary_frame(body)
 
@@ -2929,6 +2935,8 @@ def make_app_player_data_sync(app) -> bytes:
         db_task_state=getattr(app, "db_task_state", None),
         save_boxes=getattr(app, "save_boxes", None),
         cosmetics=getattr(app, "cosmetics", None),
+        limit_events=shop_static.limit_events((getattr(app, "local_purchases", {}) or {}).get("limits"),
+                                              int(time.time())),
         part_skins=getattr(app, "part_skins", None),
     )
 

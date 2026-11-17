@@ -287,3 +287,31 @@ def roll_page_picks(items: list[dict], rng, page: int, level: int | None = None)
             break
     return picked
 
+
+LIMIT_TYPE_DAY, LIMIT_TYPE_WEEK, LIMIT_TYPE_FOREVER = 1, 2, 5  # client LimitType (LimitDay, LimitWeek, LimitForever)
+
+
+def limit_events(limits: dict | None, unix_now: int) -> dict[int, dict[int, int]]:
+    """LimitType -> {goods id: times bought in the current period}, for PlayerData.LimitEvents.
+
+    Keys look like "shop:<goods>:<kind>:<bucket>" (see buy_shop_good). Only the current period is sent,
+    so yesterday's day count does not show as bought today.
+    """
+    import task_periods
+    current = {
+        "day": f"day:{task_periods.period_index('daily', unix_now)}",
+        "week": f"week:{task_periods.period_index('weekly', unix_now)}",
+        "lifetime": "lifetime",
+    }
+    type_of = {"day": LIMIT_TYPE_DAY, "week": LIMIT_TYPE_WEEK, "lifetime": LIMIT_TYPE_FOREVER}
+    out: dict[int, dict[int, int]] = {}
+    for key, times in (limits or {}).items():
+        parts = str(key).split(":")
+        if len(parts) != 4 or parts[0] != "shop" or not parts[1].isdigit():
+            continue
+        kind, bucket = parts[2], f"{parts[2]}:{parts[3]}" if parts[2] != "lifetime" else "lifetime"
+        if kind not in current or bucket != current[kind]:
+            continue
+        out.setdefault(type_of[kind], {})[int(parts[1])] = int(times)
+    return out
+
