@@ -2289,20 +2289,25 @@ def websocket_binary_frame(payload: bytes) -> bytes:
 LOCAL_MAX_SUB_CHANNEL = 1
 
 
-def ensure_merchant_picks(app, unix_now: int | None = None) -> None:
-    """Roll the Merchant goods once per daily period (the client's reset is 00:00 UTC+8)."""
+def ensure_shop_picks(app, unix_now: int | None = None) -> None:
+    """Roll each refreshable shop page once per daily period (the client's reset is 00:00 UTC+8).
+    A page is also rolled again when a good in it is above the player's level."""
     now = int(time.time()) if unix_now is None else int(unix_now)
     day = task_period.period_index("daily", now)
     cosmetics_state = app.cosmetics
     level = int(getattr(app, "level", 1))
-    current = cosmetics_state.get("shop_picks", {}).get("1") or []
-    if cosmetics_state.get("shop_picks_day") == day and current and all(
-            shop_static.row_level_ok(pick, level) for pick in current):
-        return
-    picks = shop_static.roll_merchant_picks(list(shop_static.cached_items()), random.Random(),
-                                            level=int(getattr(app, "level", 1)))
-    cosmetics_state["shop_picks"] = {"1": picks}
-    cosmetics_state["shop_picks_day"] = day
+    picks = dict(cosmetics_state.get("shop_picks", {}) or {})
+    same_day = cosmetics_state.get("shop_picks_day") == day
+    changed = False
+    for page in shop_static.REFRESH_PAGES:
+        current = picks.get(str(page)) or []
+        if same_day and current and all(shop_static.row_level_ok(row, level) for row in current):
+            continue
+        picks[str(page)] = shop_static.roll_page_picks(list(shop_static.cached_items()), random.Random(), page, level)
+        changed = True
+    if changed or not same_day:
+        cosmetics_state["shop_picks"] = picks
+        cosmetics_state["shop_picks_day"] = day
 
 
 def make_public_svr_sync(server_time: int | None = None,
@@ -5151,7 +5156,7 @@ class Handler(socketserver.BaseRequestHandler):
                                 guide_step_source="per-player local profile; 0 preserves the original client tutorial")
                     time.sleep(0.05)
                     server_time = game_time_seconds()
-                    ensure_merchant_picks(self.app)
+                    ensure_shop_picks(self.app)
                     self.request.sendall(make_public_svr_sync(
                         server_time,
                         session_token=getattr(self.app, "session_token", None),
@@ -5453,16 +5458,17 @@ class Handler(socketserver.BaseRequestHandler):
                         with self.app.roguelike_lock:
                             refresh_shared_profile_state(self.app)
                             diamonds = int(self.app.inventory_items.get(DIAMOND_ITEM_ID, 0))
-                            if i_param != shop_static.MERCHANT_PAGE:
-                                rejection_reason = "only the Merchant page has a random roll"
+                            if i_param not in shop_static.REFRESH_PAGES:
+                                rejection_reason = "this shop page has no random refresh"
                             elif diamonds < shop_static.MERCHANT_REFRESH_DIAMOND:
                                 rejection_reason = "not enough diamonds"
                             else:
                                 self.app.inventory_items[DIAMOND_ITEM_ID] = diamonds - shop_static.MERCHANT_REFRESH_DIAMOND
-                                picks = shop_static.roll_merchant_picks(
-                                    list(shop_static.cached_items()), random.Random(),
+                                picks = shop_static.roll_page_picks(
+                                    list(shop_static.cached_items()), random.Random(), int(i_param),
                                     level=int(getattr(self.app, "level", 1)))
-                                self.app.cosmetics["shop_picks"] = {str(shop_static.MERCHANT_PAGE): picks}
+                                self.app.cosmetics["shop_picks"] = {
+                                    **dict(self.app.cosmetics.get("shop_picks", {}) or {}), str(i_param): picks}
                                 self.app.cosmetics["shop_picks_day"] = task_period.period_index(
                                     "daily", int(time.time()))
                                 save_profile_state(self.app)
@@ -5479,7 +5485,7 @@ class Handler(socketserver.BaseRequestHandler):
                                 )
                         self.record("synthetic_merchant_refresh", request_id=159, opr_type=opr_type,
                                     accepted=accepted, rejection_reason=rejection_reason,
-                                    picks=(self.app.cosmetics.get("shop_picks", {}) or {}).get("1"),
+                                    picks=(self.app.cosmetics.get("shop_picks", {}) or {}).get(str(i_param)),
                                     purpose="Merchant refresh: random goods for 200 diamonds")
                     elif opr_type in (12, 20, 21):
                         # E_INFO_OPR_LINEUP_EMITTER, REPORT_FRIEND_NUM, and

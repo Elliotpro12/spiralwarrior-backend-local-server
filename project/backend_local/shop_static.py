@@ -254,3 +254,36 @@ def row_level_ok(row_id: int, level: int) -> bool:
     row = item_by_id().get(int(row_id))
     return row is not None and int(row.get("limitLevel", 0) or 0) <= int(level)
 
+
+REFRESH_PAGES = (1, 2, 3, 4, 5)  # tabs with a refresh button: Merchant, Adventure, Challenge, Blazar, Magic Lottery
+
+
+def page_pool(items: list[dict], page: int, level: int | None = None) -> list[dict]:
+    """Priced daily rows of one shop page, optionally limited to the player's level."""
+    rows = [x for x in items
+            if int(x.get("shopType", -1)) == 0 and int(x.get("pageIdx", -1)) == int(page)
+            and (int(x.get("diamond", 0)) > 0 or int(x.get("gold", 0)) > 0
+                 or int(x.get("TimeSlider", 0)) > 0 or x.get("Worth"))]
+    if level is not None:
+        rows = [r for r in rows if int(r.get("limitLevel", 0) or 0) <= int(level)]
+    return sorted(rows, key=lambda r: int(r["Id"]))
+
+
+def roll_page_picks(items: list[dict], rng, page: int, level: int | None = None) -> list[int]:
+    """Row ids for one shop page's random refresh. Page 1 keeps the Ascended rule; the other tabs
+    draw DAILY_SLOTS_PER_PAGE distinct rewards from their own priced rows."""
+    if int(page) == MERCHANT_PAGE:
+        return roll_merchant_picks(items, rng, level=level)
+    pool = page_pool(items, page, level)
+    picked: list[int] = []
+    used: set[int] = set()
+    for row in rng.sample(pool, len(pool)):
+        reward = int(row["ItemList"][0]["ID"]) if row.get("ItemList") else int(row["Id"])
+        if reward in used:
+            continue
+        used.add(reward)
+        picked.append(int(row["Id"]))
+        if len(picked) == DAILY_SLOTS_PER_PAGE:
+            break
+    return picked
+
