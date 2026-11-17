@@ -94,7 +94,9 @@ def build_all_static_shop(items: list[dict]) -> bytes:
     return bytes(out)
 
 
-DAILY_PAGES = (1, 2, 3, 4, 5, 6)  # Sync_DailyShopType: Normal, Rogue, TimePlay, SecretArea (Adventure: Time debris), LuckyCard, Club
+DAILY_PLUS_PAGE = 999  # Sync_DailyShopType.DailyPlus: extra Merchant cards (client: p+6 slots)
+DAILY_PLUS_COUNT = 4  # DailyPlus goods per day (chosen by the product owner)
+DAILY_PAGES = (1, 2, 3, 4, 5, 6, DAILY_PLUS_PAGE)  # Sync_DailyShopType: Normal, Rogue, TimePlay, SecretArea (Adventure: Time debris), LuckyCard, Club
 DAILY_SLOTS_PER_PAGE = 6  # the Merchant grid has six positions
 DAILY_CLEAR_KEYS = 64  # ItemList keys cleared before each daily shop update (the grid uses at most 34)
 
@@ -177,7 +179,7 @@ def build_daily_shop(next_update_time: int, items: list[dict], picks: dict | Non
                     and (int(x.get("diamond", 0)) > 0 or int(x.get("gold", 0)) > 0
                          or int(x.get("TimeSlider", 0)) > 0 or x.get("Worth"))]
             rows.sort(key=lambda x: int(x["Id"]))
-            rows = rows[:DAILY_SLOTS_PER_PAGE]
+            rows = rows[:DAILY_PLUS_COUNT if page == DAILY_PLUS_PAGE else DAILY_SLOTS_PER_PAGE]
         for row in rows:
             out += _bytes(2, _container(key, encode_shop_item(row)))
             key += 1
@@ -279,6 +281,8 @@ def page_pool(items: list[dict], page: int, level: int | None = None) -> list[di
 
 
 def roll_page_picks(items: list[dict], rng, page: int, level: int | None = None) -> list[int]:
+    if int(page) == DAILY_PLUS_PAGE:
+        return roll_daily_plus_picks(items, rng, level)
     """Row ids for one shop page's random refresh. Page 1 keeps the Ascended rule; the other tabs
     draw DAILY_SLOTS_PER_PAGE distinct rewards from their own priced rows."""
     if int(page) == MERCHANT_PAGE:
@@ -353,4 +357,20 @@ def merchant_slots(level: int) -> int:
     if row is None:
         return DAILY_SLOTS_PER_PAGE
     return max(1, min(DAILY_SLOTS_PER_PAGE, int(row["maxDailyShopNum"])))
+
+
+def roll_daily_plus_picks(items: list[dict], rng, level: int | None = None) -> list[int]:
+    """DAILY_PLUS_COUNT distinct DailyPlus rewards per day (page 999 priced rows)."""
+    pool = page_pool(items, DAILY_PLUS_PAGE, level)
+    picked: list[int] = []
+    used: set[int] = set()
+    for row in rng.sample(pool, len(pool)):
+        reward = int(row["ItemList"][0]["ID"]) if row.get("ItemList") else int(row["Id"])
+        if reward in used:
+            continue
+        used.add(reward)
+        picked.append(int(row["Id"]))
+        if len(picked) == DAILY_PLUS_COUNT:
+            break
+    return picked
 

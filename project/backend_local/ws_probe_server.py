@@ -2289,7 +2289,7 @@ def websocket_binary_frame(payload: bytes) -> bytes:
 LOCAL_MAX_SUB_CHANNEL = 1
 
 
-def ensure_shop_picks(app, unix_now: int | None = None) -> None:
+def ensure_shop_picks(app, unix_now: int | None = None) -> bool:
     """Roll each refreshable shop page once per daily period (the client's reset is 00:00 UTC+8).
     A page is also rolled again when a good in it is above the player's level."""
     now = int(time.time()) if unix_now is None else int(unix_now)
@@ -2299,9 +2299,12 @@ def ensure_shop_picks(app, unix_now: int | None = None) -> None:
     picks = dict(cosmetics_state.get("shop_picks", {}) or {})
     same_day = cosmetics_state.get("shop_picks_day") == day
     changed = False
-    for page in shop_static.REFRESH_PAGES:
+    for page in shop_static.REFRESH_PAGES + (shop_static.DAILY_PLUS_PAGE,):
         current = picks.get(str(page)) or []
-        expected = shop_static.merchant_slots(level) if page == shop_static.MERCHANT_PAGE else len(current)
+        if page == shop_static.DAILY_PLUS_PAGE:
+            expected = shop_static.DAILY_PLUS_COUNT
+        else:
+            expected = shop_static.merchant_slots(level) if page == shop_static.MERCHANT_PAGE else len(current)
         if (same_day and current and len(current) == expected
                 and all(shop_static.row_level_ok(row, level) for row in current)):
             continue
@@ -2310,6 +2313,8 @@ def ensure_shop_picks(app, unix_now: int | None = None) -> None:
     if changed or not same_day:
         cosmetics_state["shop_picks"] = picks
         cosmetics_state["shop_picks_day"] = day
+        return True
+    return False
 
 
 def make_public_svr_sync(server_time: int | None = None,
@@ -5178,7 +5183,8 @@ class Handler(socketserver.BaseRequestHandler):
                                 guide_step_source="per-player local profile; 0 preserves the original client tutorial")
                     time.sleep(0.05)
                     server_time = game_time_seconds()
-                    ensure_shop_picks(self.app)
+                    if ensure_shop_picks(self.app):
+                        save_profile_state(self.app)  # keep today's picks across restarts
                     self.request.sendall(make_public_svr_sync(
                         server_time,
                         session_token=getattr(self.app, "session_token", None),
