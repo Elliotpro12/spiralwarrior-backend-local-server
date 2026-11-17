@@ -34,6 +34,7 @@ import save_boxes as save_box
 import item_registry
 import task_periods as task_period
 import shop_repair
+import shop_static
 import season_config
 import cosmetics as cosmetic
 import skins as part_skin
@@ -2305,7 +2306,8 @@ def make_public_svr_sync(server_time: int | None = None,
     # PlayerInfoProto.DailyShop=2 (NetDailyShopProto.NextUpdateTime=1, game seconds): the client
     # reads it for the Daily Missions countdown (SyncDataManager.getNextUpdateTime).
     next_daily_reset = task_period.next_reset_game_seconds(3, server_time)
-    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, protobuf_int(1, next_daily_reset))
+    daily_shop = shop_static.build_daily_shop(next_daily_reset, list(shop_static.cached_items()))
+    player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, daily_shop)
                    + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
     body = struct.pack(">IH", 6 + len(player_info), 2) + player_info
     return websocket_binary_frame(body)
@@ -2917,6 +2919,20 @@ def make_initial_roguelike_map_state(*, version: int, chapter_id: int,
             },
         },
     }
+
+
+def make_all_static_shop_sync(items: list[dict] | None = None) -> bytes:
+    """Build message 3 (AllStaticShopProto): the Merchant tabs' goods and prices.
+
+    Without it the client's getShopItems() finds no StaticShop entries and every
+    Merchant tab shows locked slots. Goods come from the local ShopItem table
+    (shop_static.py).
+    """
+    if items is None:
+        items = shop_static.load_items()
+    proto = shop_static.build_all_static_shop(items)
+    body = struct.pack(">IH", 6 + len(proto), 3) + proto
+    return websocket_binary_frame(body)
 
 
 def make_roguelike_info_sync(state: dict) -> bytes:
@@ -5054,6 +5070,9 @@ class Handler(socketserver.BaseRequestHandler):
                         public_http_url=self.app.public_http_url,
                         public_ws_url=self.app.public_ws_url,
                     ))
+                    self.request.sendall(make_all_static_shop_sync())
+                    self.record("synthetic_all_static_shop_sync", message_id=3,
+                                purpose="Merchant tab goods from the local ShopItem table")
                     self.record("synthetic_player_info_sync", message_id=2,
                                 player_info_field=12,
                                 sys_info_server_time=server_time,
