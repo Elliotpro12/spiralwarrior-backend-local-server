@@ -5112,6 +5112,8 @@ class Handler(socketserver.BaseRequestHandler):
                                     purpose="preserve one pre-counter Adventure entry for GP progression")
                     self.request.sendall(make_player_data_sync(
                         self.app.player_id,
+                        limit_events=shop_static.limit_events(
+                            (getattr(self.app, "local_purchases", {}) or {}).get("limits"), int(time.time())),
                         nickname=(getattr(self.app, "account", {}).get("username")
                                   or (getattr(self.app, "account", {}).get("email") or "Beta Tester").split("@", 1)[0]
                                   if getattr(self.app, "account", None) else "Local Test"),
@@ -5381,6 +5383,8 @@ class Handler(socketserver.BaseRequestHandler):
                                     or (account.get("email") or "Beta Tester").split("@", 1)[0])
                         self.request.sendall(make_player_data_sync(
                             self.app.player_id,
+                            limit_events=shop_static.limit_events(
+                                (getattr(self.app, "local_purchases", {}) or {}).get("limits"), int(time.time())),
                             nickname=nickname,
                             roguelike_key_num=self.app.roguelike_keys,
                             roguelike_search_points=self.app.roguelike_search_points,
