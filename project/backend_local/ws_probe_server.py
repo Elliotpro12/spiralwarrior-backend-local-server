@@ -33,6 +33,7 @@ import outgoing_trace
 from admin_mail import claim_mail
 import save_boxes as save_box
 import item_registry
+import events
 import task_periods as task_period
 import shop_repair
 import shop_static
@@ -180,6 +181,16 @@ SEASON_TASK_TYPE = 9  # SeasonStaticTask (Season tab): only sent while a season 
 PERIODIC_TASK_TYPES = (3, 9, 10)  # DailyStaticTask (Daily tab), SeasonStaticTask (Season tab), SeasonWeeklyTask (Weekly tab)
 
 
+def lucky_card_activity_containers() -> bytes:
+    """PlayerData.LuckyCardActivity (field 29): one entry for the open seasonal activity. The client's
+    node callback then re-reads the activity (ActivityRefreshOpen after 3 s), which reads DBTaskLists[14]."""
+    lucky = events.active_lucky_card()
+    if lucky is None:
+        return b""
+    card = protobuf_bytes(2, protobuf_int(2, 0))  # LuckyCardProto.LuckyLoc = 0 (no card drawn yet)
+    return protobuf_bytes(29, protobuf_int(1, lucky["lucky_id"]) + card)
+
+
 def make_db_task_containers(db_task_state, inventory_items, progression_counters, part_levels,
                             *, periodic: bool, daily_static_status: int | None = None):
     """PlayerData.DBTaskLists containers (field 4), one per task type.
@@ -211,6 +222,12 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
         elif process <= 0 and status <= TASK_STATUS_DOING:
             continue
         by_type.setdefault(task_type, []).append((task_id, process, status))
+    # Seasonal activity (Halloween, Thanksgiving, Christmas): a LuckyCardTask container whose Param is the
+    # LuckyCard row id and whose EndSymbol is the end time (events.py). The login sync uses the periodic
+    # call, and the other sync uses the non-periodic one, so both must include it.
+    lucky = events.active_lucky_card()
+    if lucky is not None:
+        by_type.setdefault(events.LUCKY_CARD_TASK_TYPE, [])
     containers = []
     for task_type, entries in sorted(by_type.items()):
         task_entries = b"".join(
@@ -220,11 +237,15 @@ def make_db_task_containers(db_task_state, inventory_items, progression_counters
         )
         # EndSymbol: next reset of a daily or weekly container (task_periods, UTC+8);
         # the open season's end for the season container; 0 otherwise.
+        param = 0
         if task_type == SEASON_TASK_TYPE:
             end_symbol = season_end
+        elif lucky is not None and task_type == events.LUCKY_CARD_TASK_TYPE:
+            end_symbol = lucky["end_game"]
+            param = lucky["lucky_id"]  # DBTaskListProto.Param = LuckyCard row id
         else:
             end_symbol = task_period.next_reset_game_seconds(task_type, game_now)
-        task_list = task_entries + protobuf_int(2, end_symbol) + protobuf_int(3, 0)
+        task_list = task_entries + protobuf_int(2, end_symbol) + protobuf_int(3, param)
         containers.append(protobuf_bytes(4, protobuf_int(1, task_type) + protobuf_bytes(2, task_list)))
     return containers
 
@@ -2628,6 +2649,7 @@ def make_player_level_sync(*, level: int, exp: int, power: int, task_score: int,
         periodic=False,
     ):
         player_data += container
+    player_data += lucky_card_activity_containers()
     body = struct.pack(">IH", 6 + len(player_data), 1)
     return websocket_binary_frame(body + player_data)
 
@@ -2874,6 +2896,7 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
         )),
         protobuf_bytes(3, make_champion_history_entry(champion_history)),
         periodic_containers,
+        lucky_card_activity_containers(),
         protobuf_int(9, max(0, int(guide_step))),
         protobuf_bytes(17, roguelike_item),
         protobuf_bytes(11, make_pve_info_proto(pve_info)),
