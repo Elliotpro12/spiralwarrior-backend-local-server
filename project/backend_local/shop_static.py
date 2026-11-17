@@ -374,3 +374,21 @@ def roll_daily_plus_picks(items: list[dict], rng, level: int | None = None) -> l
             break
     return picked
 
+
+def offered_daily_ids(items: list[dict], picks: dict | None) -> set[int]:
+    """Daily ShopItem ids the client can see right now. Mirrors build_daily_shop: a page with rolled
+    picks offers those rows; a page without picks offers its first rows by id (the fallback)."""
+    offered: set[int] = set()
+    for page in DAILY_PAGES:
+        if picks and str(page) in picks:
+            offered.update(int(i) for i in picks[str(page)])
+            continue
+        rows = [x for x in items
+                if int(x.get("shopType", -1)) == 0 and int(x.get("pageIdx", -1)) == page
+                and (int(x.get("diamond", 0)) > 0 or int(x.get("gold", 0)) > 0
+                     or int(x.get("TimeSlider", 0)) > 0 or x.get("Worth"))]
+        rows.sort(key=lambda x: int(x["Id"]))
+        limit = DAILY_PLUS_COUNT if page == DAILY_PLUS_PAGE else DAILY_SLOTS_PER_PAGE
+        offered.update(int(x["Id"]) for x in rows[:limit])
+    return offered
+

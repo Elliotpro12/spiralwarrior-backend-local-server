@@ -4683,6 +4683,10 @@ class Handler(socketserver.BaseRequestHandler):
             return shop_static.RET_INVALID_GOODS
         with self.app.roguelike_lock:
             refresh_shared_profile_state(self.app)
+            # Daily goods must be on today's list (the grid the client shows); static packs are not daily.
+            if int(row.get("shopType", -1)) == 0 and int(goods_id) not in shop_static.offered_daily_ids(
+                    list(shop_static.cached_items()), self.app.cosmetics.get("shop_picks")):
+                return shop_static.RET_INVALID_GOODS
             # limitLevel is a GP requirement (client ERROR_ITEMRET_NEED_PLAYERLEVEL: "Your GP is not high enough").
             if shop_static.gp_for_level(int(getattr(self.app, "level", 1))) < int(row.get("limitLevel", 0) or 0):
                 return shop_static.RET_LEVEL_LIMIT
@@ -5083,6 +5087,17 @@ class Handler(socketserver.BaseRequestHandler):
                 self.record("client_message", **summary)
                 if message_id == 131:
                     self.request.sendall(make_tick_reply())
+                    # Daily picks change at midnight (UTC+8) or when the level grants new Merchant
+                    # slots / GP unlocks. Resend the shop list when they do.
+                    if ensure_shop_picks(self.app):
+                        save_profile_state(self.app)
+                        self.request.sendall(make_public_svr_sync(
+                            game_time_seconds(),
+                            session_token=getattr(self.app, "session_token", None),
+                            public_http_url=self.app.public_http_url,
+                            public_ws_url=self.app.public_ws_url,
+                            daily_picks=self.app.cosmetics.get("shop_picks"),
+                        ))
                     if getattr(self.app, "mpo_notify_pending", 0):
                         # The module-report notice (23) can arrive before the search screen listens.
                         # Resend it on the next few ticks so the search screen can finish.
