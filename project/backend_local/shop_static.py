@@ -96,6 +96,7 @@ def build_all_static_shop(items: list[dict]) -> bytes:
 
 DAILY_PAGES = (1, 2, 3, 4, 5, 6)  # Sync_DailyShopType: Normal, Rogue, TimePlay, SecretArea (Adventure: Time debris), LuckyCard, Club
 DAILY_SLOTS_PER_PAGE = 6  # the Merchant grid has six positions
+DAILY_CLEAR_KEYS = 64  # ItemList keys cleared before each daily shop update (the grid uses at most 34)
 
 
 RARITY_PATH = DATA_PATH.with_name("item_rarity.json")  # item id -> rarity, from the client Item table
@@ -160,6 +161,11 @@ def build_daily_shop(next_update_time: int, items: list[dict], picks: dict | Non
     Each page gets its first DAILY_SLOTS_PER_PAGE priced daily rows; slot keys are unique.
     """
     out = bytearray(_int(1, int(next_update_time)))
+    # The client merges ItemList per key and keeps fields the message omits (RewardList entries,
+    # zero-valued scalars). A container with only idx deletes that key (client merge: no val -> delete),
+    # so clear every slot first; the new goods then build each card from scratch.
+    for clear_key in range(1, DAILY_CLEAR_KEYS + 1):
+        out += _bytes(2, _int(1, clear_key))
     key = 1
     by_id = {int(x["Id"]): x for x in items}
     for page in DAILY_PAGES:
