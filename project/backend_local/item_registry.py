@@ -113,3 +113,13 @@ def destination_for(item_id: int) -> str:
 
 def known_ids() -> set[int]:
     return set(registry().keys())
+
+
+CURRENCY_ITEM_TYPE = 25  # Item_ItemType.Currency: the client reads these from BaseInfo.Currency.
+
+
+def currency_ids() -> set[int]:
+    """Item ids of the client's Currency type (BaseInfo.Currency, field 55)."""
+    return {int(item_id) for item_id, entry in registry().items()
+            if int(entry.get("type", -1)) == CURRENCY_ITEM_TYPE}
+

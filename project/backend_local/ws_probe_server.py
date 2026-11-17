@@ -1341,6 +1341,14 @@ def save_profile_state(app) -> None:
             int(shared_flags.get("roguelike_key_ad_claim_day", -1)),
             int(getattr(app, "roguelike_key_ad_claim_day", -1)),
         )
+        # Shop purchase limits ("shop:<goods>:<bucket>") are counted in memory by buy_shop_good;
+        # keep the highest count between the disk copy and this process.
+        memory_limits = (getattr(app, "local_purchases", None) or {}).get("limits", {}) or {}
+        merged_limits = dict((shared_purchases or {}).get("limits", {}) or {})
+        for key, value in memory_limits.items():
+            if str(key).startswith("shop:"):
+                merged_limits[key] = max(int(merged_limits.get(key, 0)), int(value))
+        shared_purchases = {**(shared_purchases or {}), "limits": merged_limits}
         app.local_purchases = shared_purchases
         app.daily_task_claimed = bool(getattr(app, "daily_task_claimed", False) or shared_flags.get("daily_task_claimed", False))
         app.achievement_claimed = bool(getattr(app, "achievement_claimed", False) or shared_flags.get("achievement_claimed", False))
@@ -2782,6 +2790,11 @@ def make_player_data_sync(player_id: int, *, nickname: str = "Local Test",
             # missing from DefaultItems (e.g. a spent lottery ticket still showed 1).
             item_count = protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity))
             base_info += protobuf_bytes(22, item_count)
+    # Type-25 currencies (Arcane Crystal, Blazar Matrix, Lucky Star...) are read by the client from
+    # BaseInfo.Currency (repeated ContainerIntIntProto at field 55), not from DefaultItems.
+    for currency_id in sorted(item_registry.currency_ids()):
+        base_info += protobuf_bytes(55, protobuf_int(1, currency_id)
+                                    + protobuf_int(2, inventory_count(currency_id)))
     # Equipped cosmetics: HeadIcon is the item id as text (13); frame 58, scene 61, bubble 65, card 66.
     equipped = cosmetic.normalize_cosmetics(cosmetics)
     if equipped["head_icon"]:
@@ -4598,12 +4611,54 @@ class Handler(socketserver.BaseRequestHandler):
                     purpose="buy a part skin with its price, or equip an owned skin on a top part")
 
     def handle_shop_opr(self, body: bytes) -> None:
-        """ECS_ShopOpr (137): buy a repair kit good (Store > Packs > Launcher > Repair Kits)."""
+        """ECS_ShopOpr (137): buy a shop good. Repair kits use their own captured table; every other
+        good comes from the decoded ShopItem table (shop_static.py)."""
         values = protobuf_varint_values(body)
         goods_id = int32_value(values.get(3, 0))
         goods_num = int32_value(values.get(4, 0))
         cost_type = int32_value(values.get(5, 0))
         table = shop_repair.load_table()
+        if goods_id in table:
+            self.handle_repair_shop_opr(goods_id, goods_num, cost_type, table)
+            return
+        ret = self.buy_shop_good(goods_id, goods_num)
+        self.request.sendall(make_shop_opr_response(ret))
+        self.record("synthetic_shop_opr", request_id=SHOP_OPR_REQUEST_ID,
+                    goods_id=goods_id, goods_num=goods_num, cost_type=cost_type,
+                    shop_opr_ret=ret, purpose="ShopItem purchase; currency and limits checked")
+
+    def buy_shop_good(self, goods_id: int, goods_num: int) -> int:
+        """Charge the price, grant the rewards, count the purchase. Returns the SC_ShopOpr code."""
+        row = shop_static.item_by_id().get(int(goods_id))
+        if row is None or int(goods_num) < 1:
+            return shop_static.RET_INVALID_GOODS
+        with self.app.roguelike_lock:
+            refresh_shared_profile_state(self.app)
+            if int(getattr(self.app, "level", 1)) < int(row.get("limitLevel", 0) or 0):
+                return shop_static.RET_LEVEL_LIMIT
+            limits = self.app.local_purchases.setdefault("limits", {})
+            bucket = shop_static.limit_bucket(int(row.get("LimitType", 0)), int(time.time()))
+            limit_key = f"shop:{int(goods_id)}:{bucket}" if bucket else None
+            times = int(row.get("limitTimes", 0) or 0)
+            used = int(limits.get(limit_key, 0)) if limit_key else 0
+            if limit_key and times > 0 and used + int(goods_num) > times:
+                return shop_static.RET_TIMES_LIMIT
+            prices = shop_static.price_lines(row, goods_num)
+            for currency, amount in prices:
+                if int(self.app.inventory_items.get(currency, 0)) < amount:
+                    return shop_static.RET_INVALID_MONEY
+            for currency, amount in prices:
+                self.app.inventory_items[currency] = int(self.app.inventory_items.get(currency, 0)) - amount
+            for item_id, quantity in shop_static.reward_lines(row, goods_num):
+                credit_profile_item_reward(self.app, item_id, quantity)
+            if limit_key:
+                limits[limit_key] = used + int(goods_num)
+            increment_level_task_counters(self.app.progression_counters, 19, 1)  # BuyNum: one purchase
+            save_profile_state(self.app)
+        self.request.sendall(make_app_player_data_sync(self.app))
+        return shop_static.RET_OK
+
+    def handle_repair_shop_opr(self, goods_id: int, goods_num: int, cost_type: int, table: dict) -> None:
         plan = None
         with self.app.roguelike_lock:
             refresh_shared_profile_state(self.app)

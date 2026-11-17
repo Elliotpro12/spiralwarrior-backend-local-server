@@ -131,3 +131,63 @@ def load_items(path: Path = DATA_PATH) -> list[dict]:
     except (OSError, ValueError):
         return []
     return list(table.get("Items", []))
+
+
+# Currency item ids (client Item table; names confirmed in TextData-English and the Item table).
+CURRENCY_GOLD = 1227894833
+CURRENCY_DIAMOND = 1227894834
+CURRENCY_TIME_DEBRIS = 1194340400  # Adventure Shop (ShopItem.TimeSlider price)
+
+# ShopItem.LimitType: 0 none, 1 day, 2 week, 3 month, 4 year, 5 forever.
+LIMIT_NONE, LIMIT_DAY, LIMIT_WEEK = 0, 1, 2
+
+# Shop return codes (client E_ShopOprRet).
+RET_UNKNOWN, RET_INVALID_GOODS, RET_INVALID_MONEY = 0, 1, 2
+RET_MONEY_LIMIT, RET_TIMES_LIMIT, RET_LEVEL_LIMIT, RET_OK = 3, 4, 5, 6
+
+
+def item_by_id() -> dict[int, dict]:
+    return {int(row["Id"]): row for row in cached_items()}
+
+
+def price_lines(row: dict, goods_num: int) -> list[tuple[int, int]]:
+    """(currency item id, amount) for goods_num units. Discount[0] is the percent taken off."""
+    discount = int((row.get("Discount") or [0])[0] or 0)
+    discount = min(max(discount, 0), 100)
+
+    def net(value: int) -> int:
+        return int(value) * (100 - discount) // 100 * int(goods_num)
+
+    lines: list[tuple[int, int]] = []
+    if int(row.get("diamond", 0)) > 0:
+        lines.append((CURRENCY_DIAMOND, net(row["diamond"])))
+    if int(row.get("gold", 0)) > 0:
+        lines.append((CURRENCY_GOLD, net(row["gold"])))
+    if int(row.get("TimeSlider", 0)) > 0:
+        lines.append((CURRENCY_TIME_DEBRIS, net(row["TimeSlider"])))
+    worth = row.get("Worth")
+    if worth:
+        lines.append((int(worth["ID"]), net(worth["Num"])))
+    return lines
+
+
+def reward_lines(row: dict, goods_num: int) -> list[tuple[int, int]]:
+    return [(int(r["ID"]), int(r["Num"]) * int(goods_num)) for r in row.get("ItemList", [])]
+
+
+def limit_bucket(limit_type: int, unix_now: int) -> str | None:
+    """Key for the purchase cap, or None when the goods have no cap.
+
+    Day and week follow the game's UTC+8 reset (task_periods). Month, year and forever share one
+    bucket: the cap is then lifetime, which is only an approximation for month and year.
+    """
+    limit_type = int(limit_type)
+    if limit_type == LIMIT_NONE:
+        return None
+    import task_periods
+    if limit_type == LIMIT_DAY:
+        return f"day:{task_periods.period_index('daily', unix_now)}"
+    if limit_type == LIMIT_WEEK:
+        return f"week:{task_periods.period_index('weekly', unix_now)}"
+    return "lifetime"
+
