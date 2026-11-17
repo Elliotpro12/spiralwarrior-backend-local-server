@@ -4692,13 +4692,22 @@ class Handler(socketserver.BaseRequestHandler):
             for currency, amount in prices:
                 if int(self.app.inventory_items.get(currency, 0)) < amount:
                     return shop_static.RET_INVALID_MONEY
+            gold_spent = 0
             for currency, amount in prices:
                 self.app.inventory_items[currency] = int(self.app.inventory_items.get(currency, 0)) - amount
+                if currency == GOLD_ITEM_ID:
+                    gold_spent += int(amount)
             for item_id, quantity in shop_static.reward_lines(row, goods_num):
+                destination = item_registry.destination_for(item_id)
                 if int(item_registry.registry().get(int(item_id), {}).get("type", -1)) == cosmetic.TYPE_SCENE:
                     cosmetic.grant_scene(self.app.cosmetics, item_id)  # a battle scene is owned, not stacked
+                elif destination == "save_box":
+                    grant_mail_reward(self.app, item_id, quantity)  # chests and microchips go to save slots
                 else:
                     credit_profile_item_reward(self.app, item_id, quantity)
+            if gold_spent > 0:
+                # CostGold (condition 20): season and weekly "spend gold" rows count gold spent in the shop too.
+                increment_level_task_counters(self.app.progression_counters, 20, gold_spent)
             if limit_key:
                 limits[limit_key] = used + int(goods_num)
             increment_level_task_counters(self.app.progression_counters, 19, 1)  # BuyNum: one purchase
