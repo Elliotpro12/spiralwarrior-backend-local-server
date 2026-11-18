@@ -41,14 +41,39 @@ import season_config
 import cosmetics as cosmetic
 import skins as part_skin
 import item_catalog
+import part_storage
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 TEST_ACHIEVEMENT_ID = 1093677105  # Static AchievementData row: Veteran / CHAMPION_RACE.
 TEST_ROGUELIKE_KEYS = 5  # Local-only Adventure starter keys.
-ROGUELIKE_KEY_CAPACITY = 6  # Live client on MuMu reports a 6-key limit for this profile.
+# The client's "N/M" key label uses
+#   VipTriggerMgr.getMaxKeyNum() = RogueLikeBaseKeyNum(5)
+#                                  + floor(level / RogueLikeEveryLevelMaxKey(1e5))
+#                                  + TalentDataCache.getAddKeylimits()
+#                                  + BuffCell.AddMaxKeyNum buff
+# so M is talent/perk driven and grows as the account progresses (live panels
+# showed 6/6 and then 6/7 for the same profile). The buy-key panel gates only on
+#   buyBtn.interactable = (4 + AddMaxBuyKeyTimes) - DailyHasBuyTimes > 0
+# and never on the key count, so a server-side refusal at a hard-coded 6 is what
+# produced the "6/7 but every OK fails with 52" bug. Keys may therefore exceed M;
+# this bound only keeps a corrupt profile from growing without limit.
+ROGUELIKE_KEY_STOCK_LIMIT = 999
 ROGUELIKE_FREE_KEY_REWARD = 1  # X3Define.RogueLikeExchangeKeyByADNum.
+ROGUELIKE_KEY_BUY_COST = 50  # UiDefine.RogueLikeExchangeCostDiamond.
+ROGUELIKE_KEY_BUY_COST_STEP = 4  # UiDefine.RogueLikeExchangeCostDiamondStep.
+ROGUELIKE_KEY_BUY_KEYS = 1  # UiDefine.RogueLikeExchangeKeyNum.
+# X3Define.RogueLikeDailyCanBuyKeyTimes is only the base of the client's daily
+# purchase cap: the buy-key panel shows
+#   VipTriggerMgr.getCanbuyKeyTimes() = 4 + BuffCell.AddMaxBuyKeyTimes
+# and the perk/title grid adds to that buff (live panels showed 5 and 7 for the
+# same profile at different title levels). The server does not model titles, so
+# it keeps the client's counter for the escalating price and lets the client's
+# own gate decide how many purchases a day it offers.
+ROGUELIKE_DAILY_KEY_BUY_TIMES_BASE = 4
 ROGUELIKE_RET_EXCHANGE_KEY_AD_ERROR = 49
 ROGUELIKE_RET_EXCHANGE_KEY_SUCCESS = 50
+ROGUELIKE_RET_EXCHANGE_KEY_DIAMOND_ERROR = 51
+ROGUELIKE_RET_EXCHANGE_KEY_TIMES_ERROR = 52
 # The client uses ui.getDateTime2018() as the epoch for SysInfo.ServerTime and
 # RogueLikeMap.Version. Runtime on LDPlayer reports 1514736000000 ms for it.
 GAME_TIME_EPOCH_MS = 1514736000000
@@ -104,6 +129,113 @@ try:
     )
 except (OSError, json.JSONDecodeError):
     LEVEL_UP_EXCHANGES = {}
+# Every TaskExchange row (condition, group bit and RewardList) so message 146 can
+# serve all claimable chests, not just the level-up rows. Generated from the
+# shipped TaskExchange table by tests/build_task_exchange_catalog.py.
+try:
+    TASK_EXCHANGE_ROWS = {
+        int(exchange_id): row for exchange_id, row in json.loads(
+            (Path(__file__).resolve().parent / "data" / "task_exchange_catalog.json")
+            .read_text(encoding="utf-8")
+        ).get("exchanges", {}).items()
+        if isinstance(row, dict)
+    }
+except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
+    TASK_EXCHANGE_ROWS = {}
+# VipData: Renown (RP01) score thresholds -> title level shown in the Honor Room.
+try:
+    VIP_LEVELS = [
+        row for row in json.loads(
+            (Path(__file__).resolve().parent / "data" / "vip_data_catalog.json")
+            .read_text(encoding="utf-8")
+        ).get("levels", [])
+        if isinstance(row, dict)
+    ]
+except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
+    VIP_LEVELS = []
+RENOWN_ITEM_ID = 1380986929  # Item "Renown" (RP01): SyncDataManager.getVIPScore() counts it.
+# TaskExchange condition ids (client TaskExchange_Condition enum, TaskExchangeManager J()).
+TASK_EXCHANGE_CONDITION_REGISTER_LOGIN = 1
+TASK_EXCHANGE_CONDITION_PLAYER_LEVEL = 8
+TASK_EXCHANGE_CONDITION_ITEM_NUM = 9
+TASK_EXCHANGE_CONDITION_ITEM_AND_PROCESS = 11
+TASK_EXCHANGE_CONDITION_RECHARGE_LEVEL = 13
+TASK_EXCHANGE_CONDITION_VIP_LEVEL = 15
+TASK_EXCHANGE_RESULT_FAILED = 0
+TASK_EXCHANGE_RESULT_ALREADY = 1
+TASK_EXCHANGE_RESULT_NOT_ENOUGH = 2
+TASK_EXCHANGE_RESULT_OK = 3
+
+
+def vip_score(inventory_items: dict[int, int] | None = None) -> int:
+    """Renown count; the client's getVIPScore() reads this inventory item."""
+    inventory_items = inventory_items or {}
+    return max(0, int(inventory_items.get(RENOWN_ITEM_ID,
+                                           inventory_items.get(str(RENOWN_ITEM_ID), 0))))
+
+
+def vip_level_for(score: int) -> int:
+    """Mirror getNowVIPData(): the first VipData row whose maxExp is above the score.
+
+    Observed in the client:
+        n = rows[0]; for (row of rows) { n = row; if (score < row.maxExp) break; }
+    so 45,000 Renown (next threshold 50,000) reports Lv.9, which is the title the
+    Honor Room shows. A score past the last threshold keeps the last row.
+    """
+    level = 0
+    for row in VIP_LEVELS:
+        level = max(level, int(row.get("id", 0)))
+        if int(score) < int(row.get("max_exp", 0)):
+            break
+    return level
+
+
+def currency_item_entries(inventory_items: dict[int, int] | None) -> bytes:
+    """BaseInfo.Currency entries (field 55) for Item_ItemType.Currency (25).
+
+    The client's getItemNumByTable reads currency items from
+    ``BaseInfo.Currency[ItemId]``; storing them only in DefaultItems leaves
+    S-Mart/Achievement currencies permanently at zero.
+    """
+    data = bytearray()
+    for item_id, quantity in sorted((inventory_items or {}).items(),
+                                    key=lambda pair: int(pair[0])):
+        entry = item_registry.classify(item_id)
+        if not entry or int(entry.get("type", -1)) != 25:
+            continue
+        item_id, quantity = int(item_id), int(quantity)
+        if item_id > 0 and quantity > 0:
+            data += protobuf_bytes(
+                55, protobuf_int(1, item_id) + protobuf_int(2, quantity),
+            )
+    return bytes(data)
+
+
+def task_exchange_ret_masks(claim_ids: object) -> dict[int, int]:
+    """Map claimed ExchangeIDs to BaseInfo.TaskExchangeRet bits.
+
+    The client stores claims per ExchangeIdx (TaskExchange_ExchangeType) as a
+    bit mask of groupIdx values (``isLongBitSet(TaskExchangeRet[idx], group)``),
+    while the profile only keeps the claimed ExchangeIDs.
+    """
+    masks: dict[int, int] = {}
+    if not isinstance(claim_ids, (list, tuple, set)):
+        return masks
+    for value in claim_ids:
+        try:
+            row = TASK_EXCHANGE_ROWS.get(int(value))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        try:
+            exchange_idx, group_idx = int(row.get("exchange_idx", 0)), int(row.get("group_idx", 0))
+        except (TypeError, ValueError):
+            continue
+        if exchange_idx <= 0 or group_idx < 0 or group_idx > 62:
+            continue
+        masks[exchange_idx] = masks.get(exchange_idx, 0) | (1 << group_idx)
+    return masks
 # Lottery milestone rewards (OrderExchange type 1, LotteryReward). Thresholds are on the
 # ticket cost record (subCondition); each claim advances PlayerData.OrderExchange[1].
 try:
@@ -290,27 +422,12 @@ PART_ITEM_CATALOG_PATH = Path(__file__).resolve().parent / "data" / "part_item_c
 
 
 def load_part_item_locations() -> dict[int, int]:
-    """Load client-confirmed part item IDs and their top/middle/bottom slots."""
-    try:
-        catalog = json.loads(PART_ITEM_CATALOG_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    locations: dict[int, int] = {}
-    for location, item_ids in (catalog.get("items_by_location", {}) or {}).items():
-        try:
-            slot = int(location)
-        except (TypeError, ValueError):
-            continue
-        if slot not in (0, 1, 2) or not isinstance(item_ids, list):
-            continue
-        for item_id in item_ids:
-            try:
-                parsed_id = int(item_id)
-            except (TypeError, ValueError):
-                continue
-            if parsed_id > 0:
-                locations[parsed_id] = slot
-    return locations
+    """Client-confirmed part item IDs and their top/middle/bottom slots.
+
+    Kept as a thin alias so the existing call sites keep working; the table
+    itself lives in part_storage.py next to the part ownership rules.
+    """
+    return part_storage.load_locations()
 
 
 PART_ITEM_LOCATIONS = load_part_item_locations()
@@ -413,6 +530,20 @@ def load_item_upgrade_catalog() -> tuple[dict[int, dict[str, object]], dict[int,
 
 
 ITEM_UPGRADE_ROWS, PART_UPGRADE_KEYS = load_item_upgrade_catalog()
+
+# ItemUpgrade.initLevel is the rarity-based starting level of a part (1 common,
+# 3 rare, 5 epic, 7 legendary, 9 ascended). The client clamps every upgrade view
+# with Math.max(Level, initLevel), so a newly owned part must be stored at this
+# level or the card and its stats stay at level 1.
+PART_INIT_LEVELS = {
+    int(part_id): max(1, int(ITEM_UPGRADE_ROWS[key].get("initLevel", 1)))
+    for part_id, key in PART_UPGRADE_KEYS.items()
+    if key in ITEM_UPGRADE_ROWS
+}
+
+
+def part_initial_level(part_id: int) -> int:
+    return part_storage.initial_level(part_id, PART_INIT_LEVELS)
 SYNTHETIC_STARTER_LEVEL = 1  # Piezas iniciales a nivel 1, como en la cuenta nueva del cliente.
 CHAMPION_RACE_TYPE = 5  # E_RaceType.CHAMPION_RACE from the client protobuf enum.
 SYNTHETIC_CHAMPION_VOUCHERS = 10
@@ -468,6 +599,10 @@ ROGUELIKE_EVENT_TYPE_BY_ID = load_roguelike_event_types()
 ROGUELIKE_LEVEL_TASK_CONDITION_BY_EVENT_TYPE = {
     1: 32, 2: 33, 5: 29, 8: 34, 9: 19,
 }
+# The client's ERogueLikeType.FinalBossEvent. The catalog holds exactly one
+# EventType 5 row per Adventure chapter (110018 for the Prologue, 100245 for
+# chapter 1, 200066 for chapter 2, ...), so beating it ends the run.
+ROGUELIKE_FINAL_BOSS_EVENT_TYPE = 5
 
 
 def load_roguelike_export_items() -> dict[str, dict[str, int]]:
@@ -578,6 +713,140 @@ def load_roguelike_shop_prices() -> dict[str, dict[str, int]]:
 
 ROGUELIKE_SHOP_PRICES = load_roguelike_shop_prices()
 
+ROGUELIKE_TASK_CATALOG_PATH = Path(__file__).resolve().parent / "data" / "roguelike_task_catalog.json"
+# RogueLikeTask_ECondition, read from the client's own enum.
+ROGUELIKE_TASK_CONDITION_COMPLETED_EVENT_ID = 1
+ROGUELIKE_TASK_CONDITION_EVENT_TYPE = 2
+ROGUELIKE_TASK_CONDITION_ITEM_NUM = 3
+ROGUELIKE_TASK_CONDITION_TUPU_NUM = 4
+ROGUELIKE_TASK_CONDITION_ALL_NODE_TIMES = 5
+ROGUELIKE_TASK_CONDITION_EXCHANGE = 6
+# RogueLikeTask.SubCondition stores the ERogueLikeType *name* for condition 2.
+ROGUELIKE_EVENT_TYPE_BY_TASK_NAME = {
+    "Lv1BattleEvent": 1, "Lv2BattleEvent": 2, "FinalBossEvent": 5,
+    "SelectEvent": 7, "RewardEvent": 8, "ShoppingEvent": 9,
+}
+# Item_ItemType.RogueLikeItem: RogueLikeItemOpr.getNowNum reads these from
+# RogueLikeItem.NowItems, every other item type is read from BaseInfo.DefaultItems.
+ROGUELIKE_NOW_ITEM_TYPE = 20
+
+
+def load_roguelike_task_catalog() -> dict[str, object]:
+    """Load the chapter-task tables the Adventure tracker needs.
+
+    The client computes a chapter's explore percentage from the GS<chapter>
+    item in the inventory and sums that same item out of the chapter-task
+    rewards, so the server has to know the task rows to ever move it. The file
+    also carries the export item types (which rewards belong in
+    RogueLikeItem.NowItems) and the IsShowPList export keys (PlistRecord).
+
+    A missing or foreign catalog returns {} and disables the tracker instead of
+    inventing progress.
+    """
+    try:
+        catalog = json.loads(ROGUELIKE_TASK_CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(catalog, dict):
+        return {}
+    if int(catalog.get("roguelike_item_type", 0)) != ROGUELIKE_NOW_ITEM_TYPE:
+        return {}
+    if int(catalog.get("count", 0)) <= 0 or not isinstance(catalog.get("tasks"), list):
+        return {}
+    return catalog
+
+
+def index_roguelike_task_catalog(
+    catalog: dict[str, object],
+) -> tuple[dict[int, dict[int, dict[str, object]]],
+           dict[int, int], dict[int, int], dict[int, int]]:
+    """Index the catalog into chapter -> task rows plus reward/plist lookups."""
+    chapter_tasks: dict[int, dict[int, dict[str, object]]] = {}
+    search_points: dict[int, int] = {}
+    export_item_types: dict[int, int] = {}
+    plist_exports: dict[int, int] = {}
+    if not catalog:
+        return chapter_tasks, search_points, export_item_types, plist_exports
+    for row in catalog.get("tasks", []):
+        if not isinstance(row, dict):
+            continue
+        try:
+            chapter_id = int(row["BelongChapter"])
+            task_id = int(row["TaskId"])
+            condition = int(row["Condition"])
+            maximum = int(row["MaxProcess"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if task_id <= 0 or condition < ROGUELIKE_TASK_CONDITION_COMPLETED_EVENT_ID:
+            continue
+        rewards: list[dict[str, int]] = []
+        for reward in row.get("Rewards") or []:
+            if not isinstance(reward, dict):
+                continue
+            try:
+                item_id, quantity = int(reward["ID"]), int(reward["Num"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if item_id > 0 and quantity > 0:
+                rewards.append({"ID": item_id, "Num": quantity})
+        chapter_tasks.setdefault(chapter_id, {})[task_id] = {
+            "TaskId": task_id,
+            "Condition": condition,
+            "SubCondition": row.get("SubCondition"),
+            "MaxProcess": max(1, maximum),
+            "Rewards": rewards,
+        }
+    for row in (catalog.get("chapter_search_points") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        try:
+            chapter_id, item_id = int(row["chapter_id"]), int(row["item_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if item_id > 0:
+            search_points[chapter_id] = item_id
+    for item_id, item_type in (catalog.get("export_item_types") or {}).items():
+        try:
+            export_item_types[int(item_id)] = int(item_type)
+        except (TypeError, ValueError):
+            continue
+    for export_key, export_item_id in (catalog.get("plist_exports") or {}).items():
+        try:
+            plist_exports[int(export_key)] = int(export_item_id)
+        except (TypeError, ValueError):
+            continue
+    return chapter_tasks, search_points, export_item_types, plist_exports
+
+
+ROGUELIKE_TASK_CATALOG = load_roguelike_task_catalog()
+(ROGUELIKE_CHAPTER_TASKS,
+ ROGUELIKE_CHAPTER_SEARCH_POINT_ITEM,
+ ROGUELIKE_EXPORT_ITEM_TYPES,
+ ROGUELIKE_PLIST_EXPORTS) = index_roguelike_task_catalog(ROGUELIKE_TASK_CATALOG)
+
+
+def roguelike_item_type(item_id: object) -> int:
+    """Return the client's Item.itemType for an Adventure reward id, if known."""
+    try:
+        return int(ROGUELIKE_EXPORT_ITEM_TYPES.get(int(item_id), 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def roguelike_tag_item_id(tag: object) -> int:
+    """Mirror the client's string2int32() tag helper ("G001" -> 1194340401)."""
+    text = str(tag if tag is not None else "").strip()
+    if not text:
+        return 0
+    if text.lstrip("-").isdigit():
+        return int(text)
+    if len(text) == 4 and not text[:1].isdigit():
+        value = 0
+        for char in text:
+            value = value * 256 + ord(char)
+        return value
+    return 0
+
 
 def roguelike_search_point_item_id(chapter_id: int) -> int:
     """Mirror the client's verified string2int32("GSNN") search-point ID."""
@@ -654,8 +923,15 @@ def normalize_lottery_info(raw: object = None) -> dict[str, object]:
 
 
 def choose_lottery_row(rows: list[dict[str, object]],
-                       inventory_items: dict[int, int]) -> dict[str, object] | None:
-    """Choose one client-table row, applying its owned-item weight when applicable."""
+                       inventory_items: dict[int, int],
+                       owned_item_ids: set[int] | None = None) -> dict[str, object] | None:
+    """Choose one client-table row, applying its owned-item weight when applicable.
+
+    ``owned_item_ids`` covers items the client counts as owned but the server does
+    not keep in the inventory: a part with Level >= 1 lives in the part lists, so
+    without this set an owned part would draw against the unowned Pvalue.
+    """
+    owned_item_ids = owned_item_ids or set()
     candidates: list[tuple[dict[str, object], int]] = []
     for row in rows:
         reward = row.get("reward", {})
@@ -665,7 +941,8 @@ def choose_lottery_row(rows: list[dict[str, object]],
         quantity = int(reward.get("Num", 0))
         if item_id <= 0 or quantity <= 0:
             continue
-        owns_item = int(inventory_items.get(item_id, inventory_items.get(str(item_id), 0))) > 0
+        owns_item = (item_id in owned_item_ids
+                     or int(inventory_items.get(item_id, inventory_items.get(str(item_id), 0))) > 0)
         raw_weight = row.get("OwnedPvalue") if owns_item else row.get("Pvalue")
         weight = max(0, int(raw_weight or 0))
         candidates.append((row, weight))
@@ -694,8 +971,10 @@ def choose_lottery_row(rows: list[dict[str, object]],
 
 def resolve_lottery_reward(lottery_id: int,
                            inventory_items: dict[int, int],
-                           lottery_state: dict[str, object]) -> dict[str, int] | None:
+                           lottery_state: dict[str, object],
+                           owned_item_ids: set[int] | None = None) -> dict[str, int] | None:
     """Resolve one pool draw through its original nested Chance rows."""
+    owned_item_ids = owned_item_ids or set()
     config = LOTTERY_CONFIGS.get(int(lottery_id))
     if config is None:
         return None
@@ -718,7 +997,8 @@ def resolve_lottery_reward(lottery_id: int,
         tier_box = int(forced["BoxId"])
     else:
         pool_id = int(config.get("PoolBoxId", 0))
-        pool_row = choose_lottery_row(LOTTERY_CHANCE_ROWS.get(pool_id, []), inventory_items)
+        pool_row = choose_lottery_row(LOTTERY_CHANCE_ROWS.get(pool_id, []), inventory_items,
+                                      owned_item_ids)
         if pool_row is None:
             return None
         reward = pool_row.get("reward", {})
@@ -727,7 +1007,7 @@ def resolve_lottery_reward(lottery_id: int,
             return None
 
     tier_rows = LOTTERY_CHANCE_ROWS.get(tier_box, [])
-    item_row = choose_lottery_row(tier_rows, inventory_items) if tier_rows else None
+    item_row = choose_lottery_row(tier_rows, inventory_items, owned_item_ids) if tier_rows else None
     if item_row is None:
         if not forced and 'pool_row' in locals():
             item_row = pool_row
@@ -1034,6 +1314,24 @@ def load_profile_state(path: Path, player_id: int) -> dict[str, object]:
         map_state["nodes"] = normalized_nodes
     else:
         map_state = None
+    # LevelProcess: chapter level index -> highest chapter cleared at that level.
+    # SyncDataManager.hasRoguelikeChapterOver(chapterId, chapterLevel) compares
+    # LevelProcess[chapterLevel] >= chapterId, and checIsOpen uses the same map to
+    # unlock the next chapter, so the key must be the level and the value the chapter.
+    raw_level_process = saved.get("roguelike_level_process", {})
+    level_process: dict[int, int] = {}
+    if isinstance(raw_level_process, dict):
+        for raw_level, raw_chapter in raw_level_process.items():
+            try:
+                chapter_level, cleared_chapter = int(raw_level), int(raw_chapter)
+            except (TypeError, ValueError):
+                continue
+            if chapter_level >= 0 and cleared_chapter != 0:
+                level_process[chapter_level] = cleared_chapter
+    # ChapterRecords: chapter id -> chapter tasks / PlistRecord / event counters.
+    chapter_records = normalize_roguelike_chapter_records(
+        saved.get("roguelike_chapter_records"),
+    )
     local_purchases = saved.get("local_purchases", {})
     if not isinstance(local_purchases, dict):
         local_purchases = {}
@@ -1069,6 +1367,12 @@ def load_profile_state(path: Path, player_id: int) -> dict[str, object]:
                            - int(purchased_parts.get(item_id, 0)))
             if quantity:
                 part_fragments[item_id] = quantity
+    # Older profiles stored part ids in inventory_items (a store the client never
+    # reads for parts) or copy counts without a Level. part_storage.migrate()
+    # rewrites both forms in place so the part becomes owned and the displayed
+    # count (Piece + 1) keeps every granted copy.
+    part_storage.migrate(inventory_items, part_levels, part_fragments,
+                         locations=PART_ITEM_LOCATIONS)
     raw_exchange_claims = saved.get("task_exchange_claims", [])
     exchange_claims = sorted({int(value) for value in raw_exchange_claims
                               if int(value) > 0}) if isinstance(raw_exchange_claims, list) else []
@@ -1159,10 +1463,16 @@ def load_profile_state(path: Path, player_id: int) -> dict[str, object]:
         "achievement_reward_applied": achievement_reward_applied,
         "level_task_state": level_task_state,
         "progression_counters": progression_counters,
-        "roguelike_keys": max(0, min(ROGUELIKE_KEY_CAPACITY,
+        "roguelike_keys": max(0, min(ROGUELIKE_KEY_STOCK_LIMIT,
                                      int(saved.get("roguelike_keys", TEST_ROGUELIKE_KEYS)))),
         "roguelike_key_ad_claim_day": max(-1, int(saved.get("roguelike_key_ad_claim_day", -1))),
+        "roguelike_daily_has_buy_times": max(
+            0, int(saved.get("roguelike_daily_has_buy_times", 0)),
+        ),
+        "roguelike_key_buy_day": max(-1, int(saved.get("roguelike_key_buy_day", -1))),
         "roguelike_map_state": map_state,
+        "roguelike_level_process": level_process,
+        "roguelike_chapter_records": chapter_records,
         "local_purchases": local_purchases,
         "daily_task_claimed": daily_task_claimed,
         "achievement_claimed": achievement_claimed,
@@ -1341,7 +1651,7 @@ def save_profile_state(app) -> None:
         ))
         key_delta = int(getattr(app, "roguelike_keys", shared_roguelike_keys)) - persisted_key_baseline
         app.roguelike_keys = max(
-            0, min(ROGUELIKE_KEY_CAPACITY, shared_roguelike_keys + key_delta),
+            0, min(ROGUELIKE_KEY_STOCK_LIMIT, shared_roguelike_keys + key_delta),
         )
         persisted_map_baseline = copy.deepcopy(getattr(
             app, "persisted_roguelike_map_state", shared_roguelike_map_state,
@@ -1359,6 +1669,16 @@ def save_profile_state(app) -> None:
             # so this only discards an obsolete concurrent write.
             merged_map_state = shared_roguelike_map_state
         app.roguelike_map_state = copy.deepcopy(merged_map_state)
+        merged_level_process = dict(shared_flags.get("roguelike_level_process", {}))
+        for chapter_level, cleared_chapter in getattr(
+                app, "roguelike_level_process", {}).items():
+            chapter_level, cleared_chapter = int(chapter_level), int(cleared_chapter)
+            previous = merged_level_process.get(chapter_level)
+            merged_level_process[chapter_level] = (
+                cleared_chapter if previous is None
+                else max(int(previous), cleared_chapter)
+            )
+        app.roguelike_level_process = merged_level_process
         app.roguelike_key_ad_claim_day = max(
             int(shared_flags.get("roguelike_key_ad_claim_day", -1)),
             int(getattr(app, "roguelike_key_ad_claim_day", -1)),
@@ -1371,6 +1691,27 @@ def save_profile_state(app) -> None:
             if str(key).startswith("shop:"):
                 merged_limits[key] = max(int(merged_limits.get(key, 0)), int(value))
         shared_purchases = {**(shared_purchases or {}), "limits": merged_limits}
+        # A concurrent login/HTTP save can only add chapter-task progress, so a
+        # union merge keeps both sides instead of letting the last writer win.
+        app.roguelike_chapter_records = merge_roguelike_chapter_records(
+            shared_flags.get("roguelike_chapter_records"),
+            getattr(app, "roguelike_chapter_records", None),
+        )
+        # Diamond key purchases are per game day; keep the later day and its count.
+        shared_buy_day = int(shared_flags.get("roguelike_key_buy_day", -1))
+        local_buy_day = int(getattr(app, "roguelike_key_buy_day", -1))
+        if local_buy_day >= shared_buy_day:
+            app.roguelike_key_buy_day = local_buy_day
+            app.roguelike_daily_has_buy_times = max(
+                int(getattr(app, "roguelike_daily_has_buy_times", 0)),
+                int(shared_flags.get("roguelike_daily_has_buy_times", 0))
+                if local_buy_day == shared_buy_day else 0,
+            )
+        else:
+            app.roguelike_key_buy_day = shared_buy_day
+            app.roguelike_daily_has_buy_times = int(
+                shared_flags.get("roguelike_daily_has_buy_times", 0),
+            )
         app.local_purchases = shared_purchases
         app.daily_task_claimed = bool(getattr(app, "daily_task_claimed", False) or shared_flags.get("daily_task_claimed", False))
         app.achievement_claimed = bool(getattr(app, "achievement_claimed", False) or shared_flags.get("achievement_claimed", False))
@@ -1450,7 +1791,7 @@ def save_profile_state(app) -> None:
             getattr(app, "guaji_pve_attempt", {}),
         )
         state = {
-            "schema_version": 8,
+            "schema_version": 9,
             "player_id": int(app.player_id),
             "inventory_items": {str(item_id): int(quantity)
                                 for item_id, quantity in sorted(merged_inventory.items())
@@ -1472,7 +1813,17 @@ def save_profile_state(app) -> None:
             },
             "roguelike_keys": int(app.roguelike_keys),
             "roguelike_key_ad_claim_day": int(getattr(app, "roguelike_key_ad_claim_day", -1)),
+            "roguelike_daily_has_buy_times": int(
+                getattr(app, "roguelike_daily_has_buy_times", 0),
+            ),
+            "roguelike_key_buy_day": int(getattr(app, "roguelike_key_buy_day", -1)),
             "roguelike_map_state": app.roguelike_map_state,
+            "roguelike_level_process": {
+                str(chapter_level): int(cleared_chapter)
+                for chapter_level, cleared_chapter
+                in sorted(getattr(app, "roguelike_level_process", {}).items())
+            },
+            "roguelike_chapter_records": getattr(app, "roguelike_chapter_records", {}),
             "local_purchases": app.local_purchases,
             "level": int(app.level),
             "exp": int(app.exp),
@@ -1560,17 +1911,59 @@ def apply_roguelike_free_key_claim(app, *, day_index: int | None = None) -> dict
         return {"response_code": ROGUELIKE_RET_EXCHANGE_KEY_AD_ERROR,
                 "granted": False, "reason": "already_claimed_today"}
     before = max(0, int(getattr(app, "roguelike_keys", 0)))
-    if before >= ROGUELIKE_KEY_CAPACITY:
-        return {"response_code": ROGUELIKE_RET_EXCHANGE_KEY_AD_ERROR,
-                "granted": False, "reason": "key_capacity_reached",
-                "key_num": before}
-    granted = min(ROGUELIKE_FREE_KEY_REWARD, ROGUELIKE_KEY_CAPACITY - before)
-    app.roguelike_keys = before + granted
+    granted = ROGUELIKE_FREE_KEY_REWARD
+    app.roguelike_keys = min(ROGUELIKE_KEY_STOCK_LIMIT, before + granted)
     app.roguelike_key_ad_claim_day = int(day_index)
     return {"response_code": ROGUELIKE_RET_EXCHANGE_KEY_SUCCESS,
             "granted": True, "key_num_before": before,
             "key_num_after": app.roguelike_keys, "key_num_granted": granted,
             "claim_day": int(day_index)}
+
+
+def roguelike_daily_key_buy_times(app, *, day_index: int | None = None) -> int:
+    """Return today's diamond key purchases (the client resets them daily)."""
+    if day_index is None:
+        day_index = game_local_day_index()
+    if int(getattr(app, "roguelike_key_buy_day", -1)) != int(day_index):
+        return 0
+    return max(0, int(getattr(app, "roguelike_daily_has_buy_times", 0)))
+
+
+def apply_roguelike_key_purchase(app, *, day_index: int | None = None) -> dict[str, object]:
+    """Buy one Adventure key for diamonds (RL_MiscOpr_ExchangeKey, opr type 1).
+
+    The client's own buy-key panel computes the price as
+    ``50 * 2 ** floor(DailyHasBuyTimes / 4)``, grants one key per purchase and
+    gates the OK button on ``(4 + BuffCell.AddMaxBuyKeyTimes) - DailyHasBuyTimes``,
+    which is perk/title driven (live panels showed 5 and 7 for the same account).
+    It never gates on the key count, so the server must not refuse on the key
+    count either: that produced "6/7" with every purchase answered 52. The
+    server therefore only enforces the diamonds and keeps the counter, which is
+    what the price block and the client's own daily gate read back.
+    """
+    if day_index is None:
+        day_index = game_local_day_index()
+    times = roguelike_daily_key_buy_times(app, day_index=day_index)
+    cost = ROGUELIKE_KEY_BUY_COST * (2 ** (times // ROGUELIKE_KEY_BUY_COST_STEP))
+    before = max(0, int(getattr(app, "roguelike_keys", 0)))
+    diamonds = max(0, int(app.inventory_items.get(DIAMOND_ITEM_ID, 0)))
+    if diamonds < cost:
+        return {"response_code": ROGUELIKE_RET_EXCHANGE_KEY_DIAMOND_ERROR,
+                "granted": False, "reason": "not_enough_diamonds",
+                "cost": cost, "diamonds": diamonds, "buy_times": times}
+    remaining = diamonds - cost
+    if remaining:
+        app.inventory_items[DIAMOND_ITEM_ID] = remaining
+    else:
+        app.inventory_items.pop(DIAMOND_ITEM_ID, None)
+    app.roguelike_keys = min(ROGUELIKE_KEY_STOCK_LIMIT, before + ROGUELIKE_KEY_BUY_KEYS)
+    app.roguelike_key_buy_day = int(day_index)
+    app.roguelike_daily_has_buy_times = times + 1
+    return {"response_code": ROGUELIKE_RET_EXCHANGE_KEY_SUCCESS,
+            "granted": True, "cost": cost, "diamonds_before": diamonds,
+            "diamonds_after": remaining, "key_num_before": before,
+            "key_num_after": app.roguelike_keys, "buy_times": times + 1,
+            "buy_day": int(day_index)}
 
 
 def refresh_shared_profile_state(app) -> None:
@@ -1580,7 +1973,7 @@ def refresh_shared_profile_state(app) -> None:
             raw_state = json.loads(app.state_file.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             raw_state = {}
-        needs_migration = not isinstance(raw_state, dict) or int(raw_state.get("schema_version", 0)) < 8
+        needs_migration = not isinstance(raw_state, dict) or int(raw_state.get("schema_version", 0)) < 9
         state = load_profile_state(app.state_file, app.player_id)
         app.inventory_items = state["inventory_items"]
         app.part_fragments = state["part_fragments"]
@@ -1599,6 +1992,10 @@ def refresh_shared_profile_state(app) -> None:
         app.champion_history = dict(state["champion_history"])
         app.roguelike_keys = int(state["roguelike_keys"])
         app.roguelike_map_state = state["roguelike_map_state"]
+        app.roguelike_level_process = dict(state["roguelike_level_process"])
+        app.roguelike_chapter_records = state["roguelike_chapter_records"]
+        app.roguelike_daily_has_buy_times = int(state["roguelike_daily_has_buy_times"])
+        app.roguelike_key_buy_day = int(state["roguelike_key_buy_day"])
         app.persisted_roguelike_keys = int(state["roguelike_keys"])
         app.persisted_roguelike_map_state = copy.deepcopy(state["roguelike_map_state"])
         app.local_purchases = state["local_purchases"]
@@ -1625,6 +2022,21 @@ def refresh_shared_profile_state(app) -> None:
         app.persisted_part_fragments = dict(state["part_fragments"])
         app.persisted_part_levels = dict(state["part_levels"])
         app.persisted_roguelike_search_points = dict(state["roguelike_search_points"])
+        # Older profiles (and any map state written before the Battle Array fix)
+        # carry no toy tops. The client builds the Battle Array from
+        # PlayerStatus.ToyTops, so derive them from the equipped lineup on every
+        # reload. Doing it here, rather than only on login, keeps every later
+        # sync correct: a login-only patch is discarded by the next refresh.
+        map_state = app.roguelike_map_state
+        if isinstance(map_state, dict) and not map_state.get("toy_tops"):
+            map_state["toy_tops"] = battle_toy_tops(
+                app.lineups, app.part_levels, app.inventory_items,
+                getattr(app, "part_skins", None),
+            )
+        # A map whose final boss is already completed is a finished run: an
+        # older build applied the boss trigger but never closed the run, so it
+        # would otherwise resume forever on the completed map.
+        close_finished_adventure_run(app)
         if needs_migration:
             save_profile_state(app)
 
@@ -1811,6 +2223,273 @@ def resolve_roguelike_search_point_rewards(export_ids: list[int]) -> list[dict[s
             for item_id, quantity in sorted(by_item.items())]
 
 
+def roguelike_int(value: object, default: int = 0) -> int:
+    """Best-effort int() for values read back from a JSON profile."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def empty_roguelike_chapter_record() -> dict[str, object]:
+    return {
+        "tasks": {},
+        "completed_event_ids": [],
+        "event_type_counts": {},
+        "all_node_triggered_times": 0,
+        "plist_record": {},
+    }
+
+
+def normalize_roguelike_chapter_records(raw: object) -> dict[str, dict[str, object]]:
+    """Normalize the persisted chapter-task records of one profile.
+
+    ChapterRecords is keyed by chapter id; every chapter keeps its task map
+    (TaskId -> Process/RewardTime), the completed event ids and per-type counts
+    that back the task conditions, the number of fully triggered runs, and the
+    PlistRecord collection (ExportItemId -> found count).
+    """
+    records: dict[str, dict[str, object]] = {}
+    if not isinstance(raw, dict):
+        return records
+    for raw_chapter, raw_row in raw.items():
+        chapter_id = roguelike_int(raw_chapter, -100000)
+        if chapter_id == -100000 or not isinstance(raw_row, dict):
+            continue
+        record = empty_roguelike_chapter_record()
+        raw_tasks = raw_row.get("tasks", {})
+        if isinstance(raw_tasks, dict):
+            for raw_task, raw_task_row in raw_tasks.items():
+                task_id = roguelike_int(raw_task, 0)
+                if task_id <= 0 or not isinstance(raw_task_row, dict):
+                    continue
+                record["tasks"][str(task_id)] = {  # type: ignore[index]
+                    "process": max(0, roguelike_int(raw_task_row.get("process", 0))),
+                    "reward_time": max(0, roguelike_int(raw_task_row.get("reward_time", 0))),
+                }
+        raw_events = raw_row.get("completed_event_ids", [])
+        if isinstance(raw_events, list):
+            record["completed_event_ids"] = sorted({  # type: ignore[index]
+                roguelike_int(value) for value in raw_events if roguelike_int(value) > 0
+            })
+        raw_counts = raw_row.get("event_type_counts", {})
+        if isinstance(raw_counts, dict):
+            for raw_type, raw_count in raw_counts.items():
+                event_type = roguelike_int(raw_type, 0)
+                count = roguelike_int(raw_count, 0)
+                if event_type > 0 and count > 0:
+                    record["event_type_counts"][str(event_type)] = count  # type: ignore[index]
+        raw_plist = raw_row.get("plist_record", {})
+        if isinstance(raw_plist, dict):
+            for raw_item, raw_count in raw_plist.items():
+                item_id = roguelike_int(raw_item, 0)
+                count = roguelike_int(raw_count, 0)
+                if item_id > 0 and count > 0:
+                    record["plist_record"][str(item_id)] = count  # type: ignore[index]
+        record["all_node_triggered_times"] = max(
+            0, roguelike_int(raw_row.get("all_node_triggered_times", 0)),
+        )
+        records[str(chapter_id)] = record
+    return records
+
+
+def merge_roguelike_chapter_records(base: object, overlay: object) -> dict[str, dict[str, object]]:
+    """Merge two profiles' chapter records without ever losing progress."""
+    merged = normalize_roguelike_chapter_records(base)
+    for chapter_id, row in normalize_roguelike_chapter_records(overlay).items():
+        target = merged.setdefault(chapter_id, empty_roguelike_chapter_record())
+        for task_id, task_row in row["tasks"].items():  # type: ignore[union-attr]
+            previous = target["tasks"].get(task_id, {})  # type: ignore[union-attr]
+            target["tasks"][task_id] = {  # type: ignore[index]
+                "process": max(roguelike_int(previous.get("process", 0)),
+                               roguelike_int(task_row.get("process", 0))),
+                "reward_time": max(roguelike_int(previous.get("reward_time", 0)),
+                                   roguelike_int(task_row.get("reward_time", 0))),
+            }
+        target["completed_event_ids"] = sorted(  # type: ignore[index]
+            set(target["completed_event_ids"]) | set(row["completed_event_ids"])  # type: ignore[arg-type]
+        )
+        for event_type, count in row["event_type_counts"].items():  # type: ignore[union-attr]
+            target["event_type_counts"][event_type] = max(  # type: ignore[index]
+                roguelike_int(target["event_type_counts"].get(event_type, 0)),  # type: ignore[union-attr,index]
+                roguelike_int(count),
+            )
+        target["all_node_triggered_times"] = max(  # type: ignore[index]
+            roguelike_int(target["all_node_triggered_times"]),
+            roguelike_int(row["all_node_triggered_times"]),
+        )
+        for item_id, count in row["plist_record"].items():  # type: ignore[union-attr]
+            target["plist_record"][item_id] = max(  # type: ignore[index]
+                roguelike_int(target["plist_record"].get(item_id, 0)),  # type: ignore[union-attr,index]
+                roguelike_int(count),
+            )
+    return merged
+
+
+def roguelike_chapter_task_process(task: dict[str, object], record: dict[str, object],
+                                   now_items: dict[int, int]) -> int:
+    """Evaluate one chapter task's process from the server's own event record."""
+    maximum = max(1, roguelike_int(task.get("MaxProcess", 1), 1))
+    condition = roguelike_int(task.get("Condition", 0))
+    sub_condition = task.get("SubCondition")
+    if condition == ROGUELIKE_TASK_CONDITION_COMPLETED_EVENT_ID:
+        completed = set(record.get("completed_event_ids") or [])
+        process = 1 if roguelike_tag_item_id(sub_condition) in completed else 0
+    elif condition == ROGUELIKE_TASK_CONDITION_EVENT_TYPE:
+        event_type = ROGUELIKE_EVENT_TYPE_BY_TASK_NAME.get(str(sub_condition).strip(), 0)
+        counts = record.get("event_type_counts") or {}
+        process = roguelike_int(counts.get(str(event_type), 0)) if event_type else 0
+    elif condition == ROGUELIKE_TASK_CONDITION_ITEM_NUM:
+        process = roguelike_int(now_items.get(roguelike_tag_item_id(sub_condition), 0))
+    elif condition == ROGUELIKE_TASK_CONDITION_TUPU_NUM:
+        process = len(record.get("plist_record") or {})
+    elif condition == ROGUELIKE_TASK_CONDITION_ALL_NODE_TIMES:
+        process = roguelike_int(record.get("all_node_triggered_times"))
+    else:
+        # TaskExchange is not tracked locally; keep whatever is already stored.
+        stored = (record.get("tasks") or {}).get(str(roguelike_int(task.get("TaskId"))), {})
+        process = roguelike_int(stored.get("process", 0)) if isinstance(stored, dict) else 0
+    return max(0, min(maximum, process))
+
+
+def credit_roguelike_reward(app, item_id: int, quantity: int) -> str:
+    """Credit an Adventure reward to the store the client actually reads.
+
+    RogueLikeItemOpr.getNowNum reads Item_ItemType.RogueLikeItem (20) counters
+    from RogueLikeItem.NowItems; those are the G001..G0NN items that the
+    RogueLikeItemNum chapter tasks count. Every other item type (including the
+    GS01..GS11 search-point items, itemType 13) is read from
+    BaseInfo.DefaultItems, i.e. the profile inventory.
+    """
+    item_id, quantity = int(item_id), max(0, int(quantity))
+    if quantity <= 0:
+        return "none"
+    if roguelike_item_type(item_id) == ROGUELIKE_NOW_ITEM_TYPE:
+        counters = getattr(app, "roguelike_search_points", None)
+        if not isinstance(counters, dict):
+            counters = {}
+        app.roguelike_search_points = counters
+        counters[item_id] = roguelike_int(counters.get(item_id, 0)) + quantity
+        return "roguelike_now_items"
+    return credit_profile_item_reward(app, item_id, quantity)
+
+
+def advance_roguelike_chapter_tasks(app, *, chapter_id: int, event_id: int = 0,
+                                    event_type: int | None = None,
+                                    export_ids: list[int] | None = None,
+                                    completed_run: bool = False
+                                    ) -> dict[str, object]:
+    """Record one finished Adventure event and auto-grant completed chapter tasks.
+
+    The client only renders RogueLikeRecord.ChapterRecords[chapter].Tasks[taskId]
+    Process/RewardTime, so the server owns the five shipped conditions:
+    completed event ids and per-type counts (this record), RogueLikeItem.NowItems
+    (RogueLikeItemNum), PlistRecord (ChapterTuPuOpenNum) and the number of fully
+    triggered runs (AllNodeTriggeredTimes). A task that reaches MaxProcess gets
+    its reward granted and a non-zero RewardTime in the same save, which is what
+    makes the chapter list leave 0.0%.
+    """
+    chapter_id = int(chapter_id)
+    tasks = ROGUELIKE_CHAPTER_TASKS.get(chapter_id)
+    empty = {"enabled": bool(tasks), "granted_items": [], "task_updates": {},
+             "chapter_id": chapter_id}
+    if not tasks:
+        return empty
+    records = getattr(app, "roguelike_chapter_records", None)
+    if not isinstance(records, dict):
+        records = {}
+    app.roguelike_chapter_records = records
+    record = records.get(str(chapter_id))
+    if not isinstance(record, dict):
+        record = empty_roguelike_chapter_record()
+        records[str(chapter_id)] = record
+    event_id = int(event_id or 0)
+    completed_ids = record["completed_event_ids"]
+    if not isinstance(completed_ids, list):
+        completed_ids = []
+        record["completed_event_ids"] = completed_ids
+    if event_id > 0 and event_id not in completed_ids:
+        completed_ids.append(event_id)
+        completed_ids.sort()
+    if event_type:
+        counts = record["event_type_counts"]
+        if not isinstance(counts, dict):
+            counts = {}
+            record["event_type_counts"] = counts
+        key = str(int(event_type))
+        counts[key] = roguelike_int(counts.get(key, 0)) + 1
+    if completed_run:
+        record["all_node_triggered_times"] = roguelike_int(
+            record.get("all_node_triggered_times")) + 1
+    plist_record = record["plist_record"]
+    if not isinstance(plist_record, dict):
+        plist_record = {}
+        record["plist_record"] = plist_record
+    for export_id in export_ids or []:
+        export_item_id = ROGUELIKE_PLIST_EXPORTS.get(roguelike_int(export_id))
+        if export_item_id:
+            key = str(export_item_id)
+            plist_record[key] = roguelike_int(plist_record.get(key, 0)) + 1
+
+    now_items = getattr(app, "roguelike_search_points", {})
+    if not isinstance(now_items, dict):
+        now_items = {}
+    task_rows = record["tasks"]
+    if not isinstance(task_rows, dict):
+        task_rows = {}
+        record["tasks"] = task_rows
+    granted: list[dict[str, object]] = []
+    updates: dict[str, dict[str, int]] = {}
+    for task_id, task in sorted(tasks.items()):
+        process = roguelike_chapter_task_process(task, record, now_items)
+        row = task_rows.get(str(task_id))
+        if not isinstance(row, dict):
+            row = {"process": 0, "reward_time": 0}
+            task_rows[str(task_id)] = row
+        row["process"] = max(roguelike_int(row.get("process", 0)), process)
+        maximum = max(1, roguelike_int(task.get("MaxProcess", 1), 1))
+        if roguelike_int(row.get("process", 0)) >= maximum and roguelike_int(row.get("reward_time", 0)) <= 0:
+            for reward in task.get("Rewards") or []:
+                destination = credit_roguelike_reward(
+                    app, int(reward["ID"]), int(reward["Num"]),
+                )
+                granted.append({"task_id": task_id, "item_id": int(reward["ID"]),
+                                "num": int(reward["Num"]), "destination": destination})
+            row["reward_time"] = max(1, game_time_seconds())
+        updates[str(task_id)] = {"process": roguelike_int(row.get("process", 0)),
+                                 "reward_time": roguelike_int(row.get("reward_time", 0))}
+    return {
+        "enabled": True,
+        "chapter_id": chapter_id,
+        "search_point_item_id": ROGUELIKE_CHAPTER_SEARCH_POINT_ITEM.get(chapter_id, 0),
+        "granted_items": granted,
+        "task_updates": updates,
+    }
+
+
+def roguelike_chapter_record_sync_rows(app) -> dict[str, dict[str, object]]:
+    """Every catalog chapter with its full task map, ready for RogueLikeRecord."""
+    records = normalize_roguelike_chapter_records(
+        getattr(app, "roguelike_chapter_records", None),
+    )
+    now_items = getattr(app, "roguelike_search_points", {})
+    if not isinstance(now_items, dict):
+        now_items = {}
+    rows: dict[str, dict[str, object]] = {}
+    for chapter_id, tasks in sorted(ROGUELIKE_CHAPTER_TASKS.items()):
+        record = records.get(str(chapter_id)) or empty_roguelike_chapter_record()
+        task_rows: dict[str, dict[str, int]] = {}
+        for task_id, task in sorted(tasks.items()):
+            stored = (record.get("tasks") or {}).get(str(task_id), {})
+            process = roguelike_chapter_task_process(task, record, now_items)
+            task_rows[str(task_id)] = {
+                "process": max(process, roguelike_int(stored.get("process", 0))),
+                "reward_time": roguelike_int(stored.get("reward_time", 0)),
+            }
+        rows[str(chapter_id)] = {"tasks": task_rows, "plist_record": record["plist_record"]}
+    return rows
+
+
 def resolve_roguelike_recover_hp_buff_exports(buff_item_ids: list[int], *,
                                               chapter_id: int,
                                               chapter_level: int,
@@ -1967,6 +2646,10 @@ def parse_roguelike_trigger_request(request: bytes) -> dict[str, object]:
         "event_id": int32_value(event_values.get(1, 0)),
         "export_ids": export_ids,
         "trigger_location": int32_value(trigger_values.get(3, 0)),
+        # TriggerNodeOnce.TriggerAllNode (field 5). The live sender sets it to 1
+        # only when RogueLikeMgr.isCompleteAll() reports the boss node reached and
+        # every other node completed, so it is the client's own chapter-win flag.
+        "trigger_all_node": int32_value(trigger_values.get(5, 0)),
         "hp_values": hp_values,
         "buff_item_ids": buff_item_ids,
     }
@@ -2455,11 +3138,13 @@ def owned_part_levels(inventory_items: dict[int, int] | None = None,
                      part_levels: dict[int, int] | None = None) -> dict[int, int]:
     """Return locally owned part IDs and their persisted synthetic level."""
     inventory_items = inventory_items or {}
-    parts = {part_id: SYNTHETIC_STARTER_LEVEL for part_id, _ in SYNTHETIC_STARTER_PARTS}
-    parts.update({part_id: 1 for part_id, _ in SYNTHETIC_GUIDE_REWARD_PARTS})
+    parts = {part_id: max(SYNTHETIC_STARTER_LEVEL, part_initial_level(part_id))
+             for part_id, _ in SYNTHETIC_STARTER_PARTS}
+    parts.update({part_id: part_initial_level(part_id)
+                  for part_id, _ in SYNTHETIC_GUIDE_REWARD_PARTS})
     for part_id in PURCHASE_PART_LOCATIONS:
         if int(inventory_items.get(part_id, inventory_items.get(str(part_id), 0))) > 0:
-            parts.setdefault(part_id, 1)
+            parts.setdefault(part_id, part_initial_level(part_id))
     for part_id, level in (part_levels or {}).items():
         part_id, level = int(part_id), int(level)
         if part_id in PART_ITEM_LOCATIONS and level > 0:
@@ -2655,8 +3340,9 @@ def make_player_level_sync(*, level: int, exp: int, power: int, task_score: int,
 
 
 def make_roguelike_item_proto(key_num: int,
-                              search_points: dict[int, int] | None = None) -> bytes:
-    """Encode RogueLikeItem.NowItems and KeyNum in PlayerData field 17."""
+                              search_points: dict[int, int] | None = None,
+                              daily_has_buy_times: int = 0) -> bytes:
+    """Encode RogueLikeItem.NowItems, KeyNum and DailyHasBuyTimes in field 17."""
     proto = bytearray()
     if isinstance(search_points, dict):
         for item_id, quantity in sorted(search_points.items(), key=lambda pair: int(pair[0])):
@@ -2664,6 +3350,10 @@ def make_roguelike_item_proto(key_num: int,
                 entry = protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity))
                 proto.extend(protobuf_bytes(2, entry))  # NowItems: ContainerIntIntProto.
     proto.extend(protobuf_int(3, max(0, int(key_num))))  # RogueLikeItemProto.KeyNum.
+    # DailyHasBuyTimes drives the buy-key panel price (50 * 2^floor(times/4)).
+    # Send it even when 0: map fields merge by key, so an absent scalar would
+    # keep whatever the client cached.
+    proto.extend(protobuf_int(5, max(0, int(daily_has_buy_times))))  # DailyHasBuyTimes.
     return bytes(proto)
 
 
@@ -2700,6 +3390,7 @@ def make_pve_info_proto(pve_info: dict[str, object] | None = None) -> bytes:
 def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, nickname: str = "Local Test",
                           roguelike_key_num: int = TEST_ROGUELIKE_KEYS,
                           roguelike_search_points: dict[int, int] | None = None,
+                          roguelike_daily_has_buy_times: int = 0,
                           roguelike_key_ad_claimed: bool = False,
                           daily_task_claimed: bool = False,
                           achievement_claimed: bool = False,
@@ -2722,7 +3413,8 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
                           db_task_state: dict | None = None,
                           save_boxes: dict | None = None,
                           cosmetics: dict | None = None,
-                          part_skins: dict | None = None) -> bytes:
+                          part_skins: dict | None = None,
+                          task_exchange_claims: list[int] | None = None) -> bytes:
     # Runtime protobuf schema: PlayerDataProto.BaseInfo=1; BaseInfo.Id=1,
     # NickName=2, Level=3, Lineups=23; ContainerIntLineup(idx=1,val=2);
     # Lineup(ToyTops=1,MainTop=2,Status=3,Name=4,Emitter=5);
@@ -2776,17 +3468,17 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
 
     parts_by_location = {0: [], 1: [], 2: []}
     owned_parts = {
-        part_id: (part_as, SYNTHETIC_STARTER_LEVEL)
+        part_id: (part_as, max(SYNTHETIC_STARTER_LEVEL, part_initial_level(part_id)))
         for part_id, part_as in SYNTHETIC_STARTER_PARTS
     }
     # GuideData row 1412444725 calls EquipPart(2011). Cocos metadata says
     # this is LocationMiddle (zero-based config enum 1), so store it in
     # BaseInfo.MidPartList with PartAs=2.
-    owned_parts.update({part_id: (part_as, 1)
+    owned_parts.update({part_id: (part_as, part_initial_level(part_id))
                         for part_id, part_as in SYNTHETIC_GUIDE_REWARD_PARTS})
     for part_id, location in PURCHASE_PART_LOCATIONS.items():
         if inventory_count(part_id) > 0:
-            owned_parts[part_id] = (location + 1, 1)
+            owned_parts[part_id] = (location + 1, part_initial_level(part_id))
     for part_id, part_level in (part_levels or {}).items():
         part_id, part_level = int(part_id), int(part_level)
         if part_id in PART_ITEM_LOCATIONS and part_level > 0:
@@ -2799,10 +3491,11 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
             part_as, part_level = owned_parts[part_id]
             piece_count = fragment_count
         elif fragment_count > 0:
-            # With Level=0 the client keeps the part locked, while its item
-            # counter still reads Piece+1 from the matching BaseInfo list.
-            part_as, part_level = location + 1, 0
-            piece_count = fragment_count - 1
+            # Pieces alone still mean the part was granted. It owns the part at
+            # its client initLevel and the item counter is Piece + 1, matching
+            # the native receive rule.
+            part_as, part_level = location + 1, part_initial_level(part_id)
+            piece_count = fragment_count
         else:
             continue
         parts_by_location[location].append(owned_part(
@@ -2858,6 +3551,13 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
     for currency_id in sorted(item_registry.currency_ids()):
         base_info += protobuf_bytes(55, protobuf_int(1, currency_id)
                                     + protobuf_int(2, inventory_count(currency_id)))
+    # BaseInfo.TaskExchangeRet is repeated ContainerIntInt64Proto at field 12:
+    # idx=ExchangeIdx, val=bit mask of the claimed groupIdx bits. Without it the
+    # client shows every claimed chest as still locked.
+    for exchange_idx, claim_mask in sorted(task_exchange_ret_masks(task_exchange_claims).items()):
+        base_info += protobuf_bytes(
+            12, protobuf_int(1, exchange_idx) + protobuf_int(2, claim_mask),
+        )
     # Equipped cosmetics: HeadIcon is the item id as text (13); frame 58, scene 61, bubble 65, card 66.
     equipped = cosmetic.normalize_cosmetics(cosmetics)
     if equipped["head_icon"]:
@@ -2886,9 +3586,13 @@ def make_player_data_sync(player_id: int, *, limit_events: dict | None = None, n
     # GuideMark.Over is bit 2 (mask 4). Keep new local profiles at zero so the
     # original client can run its introductory tutorial; later guide grids
     # persist independently through the client's GuideGrid:* local-storage keys.
-    # PlayerDataProto.RogueLikeItem=17; NowItems=2, KeyNum=3. Search-point
-    # items use ItemType.RogueLikeItem and the client reads NowItems by ID.
-    roguelike_item = make_roguelike_item_proto(roguelike_key_num, roguelike_search_points)
+    # PlayerDataProto.RogueLikeItem=17; NowItems=2, KeyNum=3, DailyHasBuyTimes=5.
+    # Search-point items use ItemType.RogueLikeItem and the client reads
+    # NowItems by ID; the GS<chapter> items are itemType 13 and live in
+    # BaseInfo.DefaultItems instead.
+    roguelike_item = make_roguelike_item_proto(
+        roguelike_key_num, roguelike_search_points, roguelike_daily_has_buy_times,
+    )
     player_data = b"".join((
         protobuf_bytes(1, base_info),
         protobuf_bytes(2, make_player_daily_proto(
@@ -2942,6 +3646,7 @@ def make_app_player_data_sync(app) -> bytes:
         int(app.player_id), nickname=nickname,
         roguelike_key_num=int(app.roguelike_keys),
         roguelike_search_points=getattr(app, "roguelike_search_points", {}),
+        roguelike_daily_has_buy_times=roguelike_daily_key_buy_times(app),
         roguelike_key_ad_claimed=roguelike_free_key_claimed_today(app),
         daily_task_claimed=bool(getattr(app, "daily_task_claimed", False)),
         achievement_claimed=bool(getattr(app, "achievement_claimed", False)),
@@ -2968,22 +3673,59 @@ def make_app_player_data_sync(app) -> bytes:
         limit_events=shop_static.limit_events((getattr(app, "local_purchases", {}) or {}).get("limits"),
                                               int(time.time())),
         part_skins=getattr(app, "part_skins", None),
+        task_exchange_claims=getattr(app, "task_exchange_claims", None),
     )
 
 
 def make_roguelike_key_sync(key_num: int,
-                            search_points: dict[int, int] | None = None) -> bytes:
-    """Sync the Adventure key count and search-point items through PlayerData."""
-    rogue_item = make_roguelike_item_proto(key_num, search_points)
+                            search_points: dict[int, int] | None = None,
+                            daily_has_buy_times: int = 0) -> bytes:
+    """Sync the Adventure key count and NowItems through PlayerData."""
+    rogue_item = make_roguelike_item_proto(
+        key_num, search_points, daily_has_buy_times,
+    )
     player_data = protobuf_bytes(17, rogue_item)  # PlayerDataProto.RogueLikeItem
     body = struct.pack(">IH", 6 + len(player_data), 1) + player_data
     return websocket_binary_frame(body)
 
 
+def battle_toy_tops(lineups: dict | None,
+                    part_levels: dict[int, int] | None = None,
+                    inventory_items: dict[int, int] | None = None,
+                    part_skins: dict | None = None) -> list[dict]:
+    """Return the three toy tops of the main lineup as Adventure battle tops.
+
+    The client's RogueLikeMgr.getToyTopMaxHp() branches on
+    ``3 === this._hpArray.length``, and RogueLikeUI.refreshTopShow() draws one
+    Battle Array column per ``lineup.toyTopInfoArray`` entry. Sending a single
+    toy top therefore left two thirds of the Battle Array empty.
+
+    Each entry keeps the Top/Mid/Bot part ids of the equipped lineup (lineup 1,
+    the one BaseInfo.LineupStatus marks as main) plus the level and skin the
+    client would show for them.
+    """
+    state = normalize_lineups(lineups)
+    owned = owned_part_levels(inventory_items, part_levels)
+    tops: list[dict] = []
+    for toy_index in range(1, 4):
+        parts = state["1"][str(toy_index)]
+        entries = []
+        for slot in ("top", "mid", "bot"):
+            part_id = int(parts[slot])
+            entries.append({
+                "id": part_id,
+                "level": int(owned.get(part_id, part_initial_level(part_id))),
+                "skin": int((part_skins or {}).get(str(part_id), 0)),
+            })
+        tops.append({"parts": entries})
+    return tops
+
+
 def make_initial_roguelike_map_state(*, version: int, chapter_id: int,
                                      chapter_level: int, seed: int,
                                      start_location: int,
-                                     hp: list[int]) -> dict:
+                                     hp: list[int],
+                                     toy_tops: list[dict] | None = None) -> dict:
     """Create a fresh Adventure state with its Start tile already traversable."""
     return {
         "version": int(version),
@@ -2993,6 +3735,7 @@ def make_initial_roguelike_map_state(*, version: int, chapter_id: int,
         "location": int(start_location),
         "start_location": int(start_location),
         "hp": list(hp),
+        "toy_tops": list(toy_tops or []),
         # Cocos creates the Start grid locally as NodeInit. Its movement
         # predicate only accepts a NodeCompleted current tile, so this status
         # must be present in the first RogueLikeInfo sync.
@@ -3020,13 +3763,77 @@ def make_all_static_shop_sync(items: list[dict] | None = None) -> bytes:
     return websocket_binary_frame(body)
 
 
-def make_roguelike_info_sync(state: dict) -> bytes:
+def make_roguelike_record_proto(level_process: dict[int, int] | None,
+                                chapter_records: dict | None = None) -> bytes:
+    """Encode RogueLikeRecordProto: ChapterRecords (3) and LevelProcess (4).
+
+    Verified schema (client pb.js):
+      RogueLikeRecordProto.ChapterRecords  = repeated ContainerIntChapterRecordProto
+                                             {1 idx=chapterId, 2 val=ChapterRecordProto}
+      ChapterRecordProto.Tasks             = repeated ContainerIntRogueLikeDBTaskProto
+                                             {1 idx=TaskId, 2 val=RogueLikeDBTaskProto
+                                              {1 Process, 2 RewardTime, 3 TaskId}}
+      ChapterRecordProto.PlistRecord       = repeated ContainerIntIntProto
+                                             {1 idx=ExportItemId, 2 val=found count}
+    RogueLikeSystemInfoMgr.addChapterTask reads the container idx as the task id
+    and copies Process/RewardTime, so the whole task map has to be sent.
+    """
+    record = bytearray()
+    for raw_chapter, row in sorted(
+            (chapter_records or {}).items(), key=lambda pair: roguelike_int(pair[0])):
+        chapter_id = roguelike_int(raw_chapter)
+        if chapter_id == 0 or not isinstance(row, dict):
+            continue
+        chapter_proto = bytearray()
+        for raw_task, task_row in sorted(
+                (row.get("tasks") or {}).items(), key=lambda pair: roguelike_int(pair[0])):
+            task_id = roguelike_int(raw_task)
+            if task_id <= 0 or not isinstance(task_row, dict):
+                continue
+            task_proto = b"".join((
+                protobuf_int(1, max(0, roguelike_int(task_row.get("process", 0)))),
+                protobuf_int(2, max(0, roguelike_int(task_row.get("reward_time", 0)))),
+                protobuf_int(3, task_id),
+            ))
+            chapter_proto += protobuf_bytes(
+                1, protobuf_int(1, task_id) + protobuf_bytes(2, task_proto),
+            )
+        for raw_item, raw_count in sorted(
+                (row.get("plist_record") or {}).items(),
+                key=lambda pair: roguelike_int(pair[0])):
+            item_id, count = roguelike_int(raw_item), roguelike_int(raw_count)
+            if item_id > 0 and count > 0:
+                chapter_proto += protobuf_bytes(
+                    2, protobuf_int(1, item_id) + protobuf_int(2, count),
+                )
+        record += protobuf_bytes(
+            3, protobuf_int(1, chapter_id) + protobuf_bytes(2, bytes(chapter_proto)),
+        )
+    for chapter_level, cleared_chapter in sorted((level_process or {}).items()):
+        if roguelike_int(cleared_chapter) == 0:
+            continue
+        record += protobuf_bytes(4, protobuf_int(1, roguelike_int(chapter_level))
+                                 + protobuf_int(2, roguelike_int(cleared_chapter)))
+    return bytes(record)
+
+
+def make_roguelike_info_sync(state: dict,
+                             level_process: dict[int, int] | None = None,
+                             chapter_records: dict | None = None) -> bytes:
     """Build message 5 (RogueLikeInfoProto) for the local Adventure session.
 
     The client derives RogueLikeManager.lineup from PlayerStatus.MainTop,
     Emitter and ToyTops. Sending only Location leaves that lineup empty even
     though PlayerData contains a main lineup, so BattleInit later receives a
     local MatchPlayer with no MatchToyTopInfo entries.
+
+    ``level_process`` maps a chapter level index to the highest chapter cleared
+    at that level. The live client schema (read from RogueLikeRecordProto.decode)
+    is RogueLikeInfoProto.RogueLikeRecord = field 2 and
+    RogueLikeRecordProto.LevelProcess = repeated field 4 of ContainerIntIntProto
+    (idx = 1, val = 2). SyncDataManager.hasRoguelikeChapterOver(chapterId,
+    chapterLevel) reads LevelProcess[chapterLevel] >= chapterId, and
+    RoguelikeSystemInfoMgr.checIsOpen uses the same map to unlock chapters.
     """
     status = b"".join((
         protobuf_int(1, int(state.get("location", 0))),  # PlayerStatus.Location
@@ -3044,20 +3851,44 @@ def make_roguelike_info_sync(state: dict) -> bytes:
 
     # RogueLikeStatus.ToyTops is repeated ContainerIntBattleToyTopProto.
     # Each toy top stores HP plus Parts keyed by the actual part IDs; the
-    # BattlePart values contain Level and CurSkin. These IDs match the
-    # synthetic parts already owned in make_player_data_sync().
+    # BattlePart values contain Level and CurSkin. RogueLikeUI.refreshTopShow()
+    # draws one Battle Array column per entry, and RogueLikeMgr.loadMap() builds
+    # _hpArray from these entries, so the whole equipped team has to be sent.
     hp_values = state.get("hp") or [0]
-    if hp_values:
-        battle_top = protobuf_int(1, max(0, int(hp_values[0])))  # BattleToyTop.HP
-        for part_id, _part_as in SYNTHETIC_STARTER_PARTS:
-            battle_part = b"".join((
-                protobuf_int(1, SYNTHETIC_STARTER_LEVEL),  # BattlePart.Level
-                protobuf_int(2, 0),  # BattlePart.CurSkin
-            ))
-            part_entry = protobuf_int(1, part_id) + protobuf_bytes(2, battle_part)
-            battle_top += protobuf_bytes(3, part_entry)  # BattleToyTop.Parts
-        top_entry = protobuf_int(1, 1) + protobuf_bytes(2, battle_top)
-        status += protobuf_bytes(4, top_entry)  # PlayerStatus.ToyTops
+    toy_tops = state.get("toy_tops") or []
+    if toy_tops:
+        for index, top in enumerate(toy_tops):
+            top_hp = int(hp_values[index]) if index < len(hp_values) else int(hp_values[0])
+            battle_top = protobuf_int(1, max(0, top_hp))  # BattleToyTop.HP
+            for part in top.get("parts", []):
+                battle_part = b"".join((
+                    protobuf_int(1, max(1, int(part.get("level", 1)))),  # BattlePart.Level
+                    protobuf_int(2, int(part.get("skin", 0))),           # BattlePart.CurSkin
+                ))
+                part_entry = (protobuf_int(1, int(part["id"]))
+                              + protobuf_bytes(2, battle_part))
+                battle_top += protobuf_bytes(3, part_entry)  # BattleToyTop.Parts
+            # RogueLikeMgr indexes this map one-based (status.ToyTops[index + 1]).
+            top_entry = protobuf_int(1, index + 1) + protobuf_bytes(2, battle_top)
+            status += protobuf_bytes(4, top_entry)  # PlayerStatus.ToyTops
+    elif hp_values:
+        # Last-resort fallback for a map state that has no toy tops at all: split
+        # the synthetic starter set into the three toy tops it represents.
+        # Sending one top holding all nine parts made the client merge every part
+        # into Battle Array slot 1 (map fields merge by key, they never remove).
+        starter_parts = [part_id for part_id, _part_as in SYNTHETIC_STARTER_PARTS]
+        for index in range(3):
+            top_hp = int(hp_values[index]) if index < len(hp_values) else int(hp_values[0])
+            battle_top = protobuf_int(1, max(0, top_hp))  # BattleToyTop.HP
+            for part_id in starter_parts[index * 3:(index + 1) * 3]:
+                battle_part = b"".join((
+                    protobuf_int(1, max(SYNTHETIC_STARTER_LEVEL, part_initial_level(part_id))),  # BattlePart.Level
+                    protobuf_int(2, 0),  # BattlePart.CurSkin
+                ))
+                part_entry = protobuf_int(1, part_id) + protobuf_bytes(2, battle_part)
+                battle_top += protobuf_bytes(3, part_entry)  # BattleToyTop.Parts
+            top_entry = protobuf_int(1, index + 1) + protobuf_bytes(2, battle_top)
+            status += protobuf_bytes(4, top_entry)  # PlayerStatus.ToyTops
 
     map_proto = b"".join((
         protobuf_int(1, int(state.get("version", 0))),
@@ -3077,6 +3908,28 @@ def make_roguelike_info_sync(state: dict) -> bytes:
         map_proto += protobuf_bytes(6, entry)  # RogueLikeMapProto.Nodes
 
     info = protobuf_bytes(1, map_proto)  # RogueLikeInfoProto.RogueLikeMap
+    record = make_roguelike_record_proto(level_process, chapter_records)
+    if record:
+        info += protobuf_bytes(2, record)  # RogueLikeInfoProto.RogueLikeRecord
+    body = struct.pack(">IH", 6 + len(info), 5) + info
+    return websocket_binary_frame(body)
+
+
+def make_roguelike_record_sync(level_process: dict[int, int] | None,
+                               chapter_records: dict | None = None) -> bytes:
+    """Send only RogueLikeRecord so the chapter list keeps its unlock state.
+
+    RogueLikeInfo is the only carrier of LevelProcess, and the login path used to
+    send it only while a map was active. Without it SyncDataManager keeps an
+    empty record, so every chapter looks locked again after an app restart.
+    ChapterRecords rides in the same message; sending it here is what gives the
+    chapter list its task progress and explore percentage at login.
+    Returns b"" when there is nothing to report.
+    """
+    record = make_roguelike_record_proto(level_process, chapter_records)
+    if not record:
+        return b""
+    info = protobuf_bytes(2, record)  # RogueLikeInfoProto.RogueLikeRecord
     body = struct.pack(">IH", 6 + len(info), 5) + info
     return websocket_binary_frame(body)
 
@@ -3094,6 +3947,37 @@ def make_roguelike_reply(code: int, *, location: int | None = None,
         proto += protobuf_bytes(3, rewards)  # SC_RogueLikeRet.Rewards (SC_GetItems)
     body = struct.pack(">IH", 6 + len(proto), 180) + proto
     return websocket_binary_frame(body)
+
+
+def make_roguelike_map_reset_frames(version: int) -> list[bytes]:
+    """Close the client-side Adventure map with two RogueLikeInfo syncs.
+
+    The live client holds a single RogueLikeInfoProto instance and merges every
+    sync into it (eventProcess.handler[5] calls ``_RogueLikeInfo.merge``), so a
+    finished map cannot be removed by omitting RogueLikeMap. Two client rules do
+    the work instead:
+
+    * eventProcess.ResetRogueLikeInfoCallBack calls
+      ResetRogueLikeMap(oldChapterId) whenever the incoming RogueLikeMap.Version
+      differs from the stored one; that wipes Nodes, ChapterId and ChapterLevel
+      before the merge. Without it, stale Nodes survive into the next chapter
+      and RogueLikeMgr.loadMap() gives up on the first unknown location.
+    * SyncDataManager.isInChapter() is ``!!RogueLikeMap.Version``, so Version 0
+      means "not in a chapter" and RogueLikeMainUI.start() calls showSystem()
+      instead of loadMap() when the UI is rebuilt after the battle report.
+
+    The first frame bumps the version to force the client's own reset; the second
+    frame clears the chapter marker.
+    """
+    def sync(map_proto: bytes) -> bytes:
+        info = protobuf_bytes(1, map_proto)  # RogueLikeInfoProto.RogueLikeMap
+        body = struct.pack(">IH", 6 + len(info), 5) + info
+        return websocket_binary_frame(body)
+
+    return [
+        sync(protobuf_int(1, max(1, int(version)))),  # RogueLikeMapProto.Version
+        sync(protobuf_int(1, 0)),
+    ]
 
 
 def make_item_opr_response(item_opr_ret: int, *, item_key: int = 0,
@@ -3147,16 +4031,26 @@ def make_roguelike_trigger_response_frames(app, *, chapter_id: int, location: in
     sync_state = result["sync_state"]
 
     if sync_state is not None:
-        frames.append(make_roguelike_info_sync(sync_state))
+        frames.append(make_roguelike_info_sync(
+            sync_state, getattr(app, "roguelike_level_process", None),
+            roguelike_chapter_record_sync_rows(app),
+        ))
+    now_item_rewards = [
+        item for item in delivery_items
+        if roguelike_item_type(int(item["item_id"])) == ROGUELIKE_NOW_ITEM_TYPE
+    ]
     if response_code == 31 and (
             delivery_items or progression_sync or result.get("inventory_changed")):
         # Full authoritative sync updates currencies, normal items, and part
         # fragments before process_RogueLikeRet -> process_GetItems runs. It
         # also carries updated LevelTask progress when a node advances GP.
         frames.append(make_app_player_data_sync(app))
-    if response_code == 31 and search_point_rewards:
+    if response_code == 31 and (search_point_rewards or now_item_rewards):
+        # Search points and RogueLikeItem counters both live in
+        # RogueLikeItem.NowItems, so the client needs field 17 refreshed.
         frames.append(make_roguelike_key_sync(
             app.roguelike_keys, app.roguelike_search_points,
+            roguelike_daily_key_buy_times(app),
         ))
 
     reward_popup_items = delivery_items + (
@@ -3175,11 +4069,18 @@ def make_roguelike_trigger_response_frames(app, *, chapter_id: int, location: in
 
 def credit_item_reward(inventory_items: dict[int, int],
                        part_fragments: dict[int, int],
-                       item_id: int, quantity: int) -> str:
-    """Credit a reward to the client-owned store for that item's type."""
+                       item_id: int, quantity: int,
+                       part_levels: dict[int, int] | None = None) -> str:
+    """Credit a reward to the client-owned store for that item's type.
+
+    Parts are stored as ``Level`` (part_levels) plus ``Piece`` (part_fragments):
+    receiving a part for the first time sets Level 1 and keeps the remaining
+    copies as pieces, which is what makes the client show it as owned.
+    """
     item_id, quantity = int(item_id), max(0, int(quantity))
-    if item_id in PART_ITEM_LOCATIONS:
-        part_fragments[item_id] = int(part_fragments.get(item_id, 0)) + quantity
+    levels = part_levels if isinstance(part_levels, dict) else {}
+    if part_storage.credit(levels, part_fragments, item_id, quantity,
+                           locations=PART_ITEM_LOCATIONS):
         return "part_fragments"
     inventory_items[item_id] = int(inventory_items.get(item_id, 0)) + quantity
     return "inventory_items"
@@ -3215,7 +4116,194 @@ def credit_profile_item_reward(app, item_id: int, quantity: int) -> str:
         return "club_score"
     fragments = getattr(app, "part_fragments", {})
     app.part_fragments = fragments
-    return credit_item_reward(app.inventory_items, fragments, item_id, quantity)
+    levels = getattr(app, "part_levels", None)
+    if not isinstance(levels, dict):
+        levels = {}
+        app.part_levels = levels
+    return credit_item_reward(app.inventory_items, fragments, item_id, quantity, levels)
+
+
+def task_exchange_item_count(app, item_id: int) -> int:
+    """Item count as the client's getItemNumByTable/getItemNumByID sees it."""
+    item_id = int(item_id)
+    if item_id == TASK_SCORE_ITEM_ID:
+        return max(0, int(getattr(app, "task_score", 0)))
+    if item_id == item_registry.ACHIEVEMENT_POINT_ITEM_ID:
+        return max(0, int(getattr(app, "achievement_total_score", 0)))
+    if item_id in PART_ITEM_LOCATIONS:
+        levels = getattr(app, "part_levels", {}) or {}
+        fragments = getattr(app, "part_fragments", {}) or {}
+        pieces = int(fragments.get(item_id, fragments.get(str(item_id), 0)))
+        # Same rule the sync uses: a part is owned with Level >= 1, and a part
+        # with pieces but no stored level is still sent as Level 1.
+        if int(levels.get(item_id, levels.get(str(item_id), 0))) < 1 and pieces <= 0:
+            return 0
+        return pieces + 1
+    inventory_items = getattr(app, "inventory_items", {}) or {}
+    return max(0, int(inventory_items.get(item_id, inventory_items.get(str(item_id), 0))))
+
+
+def roguelike_chapter_unlocked(app, chapter_id: int) -> bool:
+    """Inferred mirror of the Adventure system's checkIsUnlock(chapterId)."""
+    chapter_id = int(chapter_id)
+    if chapter_id <= 1:
+        return True
+    cleared = max((int(value) for value in
+                   (getattr(app, "roguelike_level_process", {}) or {}).values()), default=0)
+    return cleared >= chapter_id - 1
+
+
+def task_exchange_condition_met(app, row: dict) -> bool:
+    """Mirror TaskExchangeManager J(): can this row be claimed for this profile?
+
+    Observed conditions (client bundle): PlayerLevel, ItemNum, VIPLevel and
+    ItemAndProcess (Adventure unlock). Other conditions are not tracked by the
+    local profile and stay locked instead of granting free rewards.
+    """
+    condition = int(row.get("condition", -1) or -1)
+    target = [int(value) for value in (row.get("condition_value") or [])]
+    sub_condition = int(row.get("sub_condition", 0) or 0)
+    if condition == TASK_EXCHANGE_CONDITION_PLAYER_LEVEL:
+        return bool(target) and int(getattr(app, "level", 1)) >= target[0]
+    if condition == TASK_EXCHANGE_CONDITION_ITEM_NUM:
+        return bool(target) and task_exchange_item_count(app, sub_condition) >= target[0]
+    if condition == TASK_EXCHANGE_CONDITION_VIP_LEVEL:
+        return (bool(target)
+                and vip_level_for(vip_score(getattr(app, "inventory_items", {}))) >= target[0])
+    if condition == TASK_EXCHANGE_CONDITION_ITEM_AND_PROCESS:
+        return len(target) > 1 and roguelike_chapter_unlocked(app, target[1])
+    return False
+
+
+def apply_task_exchange_claim(app, exchange_id: int,
+                              sub_ids: list[int] | None = None) -> dict[str, object]:
+    """Handle one TaskExchangeOpr claim (message 146 -> 147).
+
+    Observed contract: CS_TaskExchangeOpr carries ExchangeID and optional subIds;
+    SC_TaskExchangeOpr answers TASK_EXCHANGE_OK=3, HAS_EXCHANGED=1,
+    ITEM_NOT_ENOUGH=2 or FAILED=0. Claims are stored per ExchangeIdx as a bit
+    mask of groupIdx values in BaseInfo.TaskExchangeRet (field 12).
+
+    The level-up rows (condition PlayerLevel, ExchangeIdx LevelFirstReward) keep
+    their original behaviour: claiming the current level's chest advances the
+    level, adds the row's GP and marks that level's tasks rewarded.
+    """
+    exchange_id = int(exchange_id)
+    sub_ids = [int(value) for value in (sub_ids or [])]
+    level_now = int(getattr(app, "level", 1))
+    power_now = int(getattr(app, "power", 0))
+    claim: dict[str, object] = {
+        "exchange_id": exchange_id,
+        "exchange_idx": 0,
+        "group_idx": 0,
+        "sub_ids": sub_ids,
+        "result": TASK_EXCHANGE_RESULT_FAILED,
+        "success": False,
+        "already_claimed": False,
+        "condition_met": False,
+        "requirements_met": False,
+        "grant_items": [],
+        "popup_items": [],
+        "box_contents": (),
+        "reward_counts": {},
+        "level_before": None,
+        "level_after": level_now,
+        "power_before": None,
+        "power_after": power_now,
+    }
+    row = TASK_EXCHANGE_ROWS.get(exchange_id)
+    if not isinstance(row, dict):
+        return claim
+    exchange_idx = int(row.get("exchange_idx", 0) or 0)
+    group_idx = int(row.get("group_idx", 0) or 0)
+    claim["exchange_idx"] = exchange_idx
+    claim["group_idx"] = group_idx
+    if exchange_idx <= 0 or group_idx < 0 or group_idx > 62:
+        return claim
+
+    claims = set(int(value) for value in getattr(app, "task_exchange_claims", []))
+    if (exchange_id in claims
+            or task_exchange_ret_masks(claims).get(exchange_idx, 0) & (1 << group_idx)):
+        claim.update(result=TASK_EXCHANGE_RESULT_ALREADY, already_claimed=True)
+        return claim
+    if sub_ids:
+        # Choice-style claims (subIds) are not implemented; refuse instead of
+        # granting an option the client did not select.
+        return claim
+
+    rewards = TUTORIAL_TASK_EXCHANGE_REWARDS.get(exchange_id)
+    if not rewards:
+        rewards = tuple((int(item), int(num)) for item, num in (row.get("rewards") or ()))
+    box_contents = TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS.get(exchange_id, ())
+    box_ids = {int(box_id) for box_id, _ in box_contents}
+    grant_items = [(int(item_id), int(quantity)) for item_id, quantity in rewards
+                   if int(item_id) > 0 and int(quantity) > 0]
+    for _, contents in box_contents:
+        grant_items.extend((int(item_id), int(quantity)) for item_id, quantity in contents
+                           if int(item_id) > 0 and int(quantity) > 0)
+
+    condition = int(row.get("condition", -1) or -1)
+    level_up = condition == TASK_EXCHANGE_CONDITION_PLAYER_LEVEL
+    required_task_ids: list[int] = []
+    claims_current_level = True
+    if level_up:
+        target_level = int((row.get("condition_value") or [0])[0])
+        claims_current_level = target_level == level_now
+        level_row = LEVEL_PROGRESSION_ROWS.get(level_now + 1, {})
+        required_task_ids = [int(value) for value in level_row.get("LevelTasks", []) or []]
+
+    condition_met = task_exchange_condition_met(app, row)
+    requirements_met = condition_met and claims_current_level
+    if requirements_met and level_up:
+        requirements_met = bool(required_task_ids) and all(
+            (lambda task: task is not None and level_task_progress(
+                task, app.inventory_items, app.level_task_state,
+                app.progression_counters, app.part_levels,
+            )[0] >= max(0, int(task.get("maxProcess", 0))))(
+                LEVEL_PROGRESSION_TASKS.get(task_id)
+            )
+            for task_id in required_task_ids
+        )
+    claim["condition_met"] = condition_met
+    claim["requirements_met"] = requirements_met
+    if not requirements_met:
+        claim["result"] = TASK_EXCHANGE_RESULT_NOT_ENOUGH
+        return claim
+
+    claim["level_before"] = level_now
+    claim["power_before"] = power_now
+    for item_id, quantity in grant_items:
+        credit_profile_item_reward(app, item_id, quantity)
+    claims.add(exchange_id)
+    app.task_exchange_claims = sorted(claims)
+    if level_up and claims_current_level:
+        next_level = level_now + 1
+        next_level_row = LEVEL_PROGRESSION_ROWS.get(next_level, {})
+        reward_gp = max(0, int(next_level_row.get("rewardGPA", 0)))
+        app.level = next_level
+        app.power = max(power_now + reward_gp,
+                        int(next_level_row.get("levelGPA", 0)))
+        for task_id in required_task_ids:
+            task = LEVEL_PROGRESSION_TASKS.get(task_id)
+            if task is not None:
+                app.level_task_state[str(task_id)] = {
+                    "process": max(0, int(task.get("maxProcess", 0))),
+                    "status": TASK_STATUS_REWARDED,
+                }
+    save_profile_state(app)
+    claim.update(
+        result=TASK_EXCHANGE_RESULT_OK,
+        success=True,
+        grant_items=grant_items,
+        popup_items=[(item_id, quantity) for item_id, quantity in grant_items
+                     if item_id not in box_ids],
+        box_contents=box_contents,
+        reward_counts={str(item_id): task_exchange_item_count(app, item_id)
+                       for item_id, _ in grant_items},
+        level_after=int(getattr(app, "level", level_now)),
+        power_after=int(getattr(app, "power", power_now)),
+    )
+    return claim
 
 
 def apply_part_level_upgrade(app, part_id: int) -> dict[str, object]:
@@ -3482,17 +4570,12 @@ def apply_roguelike_shop_trigger(app, *, chapter_id: int, location: int,
                                         inventory.pop(str(cost_item_id), None)
                                     app.inventory_items = inventory
                                     for item in reward_items:
-                                        credit_profile_item_reward(
+                                        credit_roguelike_reward(
                                             app, int(item["item_id"]), int(item["num"]),
                                         )
-                                    current_search_points = getattr(
-                                        app, "roguelike_search_points", {},
-                                    )
-                                    app.roguelike_search_points = current_search_points
                                     for item in search_point_rewards:
-                                        item_id, quantity = int(item["item_id"]), int(item["num"])
-                                        current_search_points[item_id] = (
-                                            int(current_search_points.get(item_id, 0)) + quantity
+                                        credit_roguelike_reward(
+                                            app, int(item["item_id"]), int(item["num"]),
                                         )
                                     event_buffs = state.setdefault("event_buffs", {})
                                     if not isinstance(event_buffs, dict):
@@ -3536,6 +4619,20 @@ def apply_roguelike_shop_trigger(app, *, chapter_id: int, location: int,
                                         state["hp"] = [int(value) for value in hp_values]
                                     state["nodes"][int(location)] = updated_node
                                     export_bit = new_export_bit
+                                    # Buying an offer records the item in the
+                                    # chapter's PlistRecord and can finish the
+                                    # RogueLikeItemNum / TuPu chapter tasks. The
+                                    # shopping event itself only counts once the
+                                    # node is fully triggered.
+                                    advance_roguelike_chapter_tasks(
+                                        app, chapter_id=chapter_id,
+                                        event_id=cached_event_id if node_status == 3 else 0,
+                                        event_type=(ROGUELIKE_EVENT_TYPE_BY_ID.get(
+                                            int(cached_event_id or event_id))
+                                            if node_status == 3 else None),
+                                        export_ids=effective_export_ids,
+                                        completed_run=False,
+                                    )
                                     sync_state = json.loads(json.dumps(state))
                                     response_code = 31
                                     should_save = True
@@ -3577,7 +4674,8 @@ def apply_roguelike_shop_trigger(app, *, chapter_id: int, location: int,
 def apply_roguelike_trigger(app, *, chapter_id: int, location: int, event_id: int,
                             export_ids: list[int], hp_values: list[int],
                             trigger_location: int = 0,
-                            buff_item_ids: list[int] | None = None) -> dict[str, object]:
+                            buff_item_ids: list[int] | None = None,
+                            trigger_all_node: int = 0) -> dict[str, object]:
     """Apply a PvE result once and replay an identical response on retry.
 
     The client can retry a trigger if the connection drops after the server
@@ -3593,16 +4691,19 @@ def apply_roguelike_trigger(app, *, chapter_id: int, location: int, event_id: in
     )
     actual_event_id = int(event_id or current_node.get("event_id", 0))
     if ROGUELIKE_EVENT_TYPE_BY_ID.get(actual_event_id) == 9:
-        return apply_roguelike_shop_trigger(
+        shop_result = apply_roguelike_shop_trigger(
             app, chapter_id=chapter_id, location=location,
             event_id=actual_event_id, export_ids=export_ids,
             hp_values=hp_values, trigger_location=trigger_location,
         )
+        shop_result.setdefault("chapter_completed", False)
+        return shop_result
 
     sync_state = None
     repeated = False
     response_code = 31  # ERogueLikeCode.TriggerSuccess
     should_save = False
+    chapter_advance: dict[str, object] = {}
     reward_items: list[dict[str, int]] = []
     part_fragment_rewards: list[dict[str, int]] = []
     search_point_rewards: list[dict[str, int]] = []
@@ -3710,15 +4811,26 @@ def apply_roguelike_trigger(app, *, chapter_id: int, location: int, event_id: in
                 }
                 delivery_items = reward_items
                 for item in delivery_items:
-                    item_id, quantity = int(item["item_id"]), int(item["num"])
-                    credit_profile_item_reward(app, item_id, quantity)
-                current_search_points = getattr(app, "roguelike_search_points", {})
-                app.roguelike_search_points = current_search_points
+                    # Type-20 (RogueLikeItem) rewards are counted in NowItems,
+                    # everything else (including the GS search-point items) in
+                    # the profile inventory.
+                    credit_roguelike_reward(app, int(item["item_id"]), int(item["num"]))
                 for item in search_point_rewards:
-                    item_id, quantity = int(item["item_id"]), int(item["num"])
-                    current_search_points[item_id] = (
-                        int(current_search_points.get(item_id, 0)) + quantity
-                    )
+                    credit_roguelike_reward(app, int(item["item_id"]), int(item["num"]))
+                finished_run = bool(
+                    int(trigger_all_node) == 1
+                    or ROGUELIKE_EVENT_TYPE_BY_ID.get(int(event_id or 0))
+                    == ROGUELIKE_FINAL_BOSS_EVENT_TYPE
+                )
+                chapter_advance = advance_roguelike_chapter_tasks(
+                    app, chapter_id=chapter_id,
+                    event_id=int(event_id or previous.get("event_id", 0)),
+                    event_type=ROGUELIKE_EVENT_TYPE_BY_ID.get(
+                        int(event_id or previous.get("event_id", 0)),
+                    ),
+                    export_ids=effective_export_ids,
+                    completed_run=finished_run,
+                )
                 event_buffs = state.setdefault("event_buffs", {})
                 if not isinstance(event_buffs, dict):
                     event_buffs = {}
@@ -3731,6 +4843,7 @@ def apply_roguelike_trigger(app, *, chapter_id: int, location: int, event_id: in
         if should_save:
             save_profile_state(app)
         inventory_item_count = len(app.inventory_items)
+        triggered_event_type = ROGUELIKE_EVENT_TYPE_BY_ID.get(int(event_id or 0))
     return {
         "response_code": response_code,
         "delivery_items": delivery_items,
@@ -3745,12 +4858,84 @@ def apply_roguelike_trigger(app, *, chapter_id: int, location: int, event_id: in
         "buff_item_ids": buff_item_ids,
         "unresolved_buff_item_ids": unresolved_buff_item_ids,
         "trigger_location": int(trigger_location),
+        "trigger_all_node": int(trigger_all_node),
+        "chapter_advance": chapter_advance,
+        # The client sends TriggerAllNode = 1 only from RogueLikeMgr.isCompleteAll(),
+        # which requires the boss node plus every other node to be finished. A run
+        # can still finish with TriggerAllNode = 0: leaving the Adventure shop
+        # (EventType 9) never sends a trigger, so that node keeps NodeInit and
+        # isCompleteAll() stays false forever. Beating the final boss (EventType 5,
+        # ERogueLikeType.FinalBossEvent) is what actually ends the chapter, so the
+        # boss trigger closes the run on its own.
+        "chapter_completed": bool(
+            response_code == 31
+            and (
+                triggered_event_type == ROGUELIKE_FINAL_BOSS_EVENT_TYPE
+                or (not repeated and int(trigger_all_node) == 1)
+            )
+        ),
         "backend_inventory_item_count": inventory_item_count,
         "inventory_changed": bool(response_code == 31 and not repeated and should_save),
         "node_status": 3 if response_code == 31 else None,
         "export_bit": None,
         "shop_purchase": None,
     }
+
+
+def record_roguelike_chapter_clear(app, *, chapter_id: int, chapter_level: int) -> None:
+    """Mark one Adventure chapter as cleared and drop the finished run.
+
+    The live client reports a finished chapter only through
+    TriggerNodeOnce.TriggerAllNode == 1, which RogueLikeMgr.isCompleteAll() sets
+    when the boss node is current and every other node is completed or triggered.
+    LevelProcess is the client's own record: LevelProcess[chapterLevel] holds the
+    highest chapter cleared at that level, so SyncDataManager.hasRoguelikeChapterOver
+    (chapterId, chapterLevel) is LevelProcess[chapterLevel] >= chapterId.
+    """
+    with app.roguelike_lock:
+        level_process = getattr(app, "roguelike_level_process", None)
+        if not isinstance(level_process, dict):
+            level_process = {}
+            app.roguelike_level_process = level_process
+        chapter_level, chapter_id = int(chapter_level), int(chapter_id)
+        # The prologue chapter is -1, so 0 cannot mean "nothing recorded":
+        # compare only when an entry already exists.
+        previous = level_process.get(chapter_level)
+        level_process[chapter_level] = (
+            chapter_id if previous is None else max(int(previous), chapter_id)
+        )
+        # The run is finished, so the next EnterMap has to build a fresh map
+        # instead of resuming the completed one.
+        app.roguelike_map_state = None
+        save_profile_state(app)
+
+
+def close_finished_adventure_run(app) -> bool:
+    """Close an Adventure run whose final boss node is already completed.
+
+    apply_roguelike_trigger marks the boss node NodeCompleted (status 3) before
+    the chapter is recorded, so a map still holding a completed EventType 5 node
+    is a run whose boss was beaten. The current trigger handler drops the map in
+    the same request; this recovers a run left open by an older build, keeping
+    the clear record and freeing the map slot on the next profile reload.
+    """
+    with app.roguelike_lock:
+        state = getattr(app, "roguelike_map_state", None)
+        if not isinstance(state, dict):
+            return False
+        for row in (state.get("nodes") or {}).values():
+            if not isinstance(row, dict) or int(row.get("status", 0)) != 3:
+                continue
+            if (ROGUELIKE_EVENT_TYPE_BY_ID.get(int(row.get("event_id", 0)))
+                    != ROGUELIKE_FINAL_BOSS_EVENT_TYPE):
+                continue
+            record_roguelike_chapter_clear(
+                app,
+                chapter_id=int(state.get("chapter_id", 0)),
+                chapter_level=int(state.get("chapter_level", 1)),
+            )
+            return True
+        return False
 
 
 def make_login_success(player_id: int) -> bytes:
@@ -4461,10 +5646,14 @@ def make_inventory_item_sync(item_id: int, quantity: int) -> bytes:
     return make_inventory_items_sync(((item_id, quantity),))
 
 
-def make_inventory_items_sync(items: tuple[tuple[int, int], ...]) -> bytes:
+def make_inventory_items_sync(items: tuple[tuple[int, int], ...], *,
+                              part_levels: dict[int, int] | None = None,
+                              part_fragments: dict[int, int] | None = None) -> bytes:
     # Wallet and task-score items are scalar BaseInfo fields in the runtime
     # schema. Sending them as DefaultItems leaves the displayed balance stale.
     base_info = bytearray()
+    part_levels = part_levels if isinstance(part_levels, dict) else {}
+    part_fragments = part_fragments if isinstance(part_fragments, dict) else {}
     scalar_fields = {
         DIAMOND_ITEM_ID: 4,  # BaseInfo.Diamond
         GOLD_ITEM_ID: 5,     # BaseInfo.Gold
@@ -4473,11 +5662,35 @@ def make_inventory_items_sync(items: tuple[tuple[int, int], ...]) -> bytes:
     for item_id, quantity in items:
         if item_id <= 0 or quantity < 0:
             continue
+        location = PART_ITEM_LOCATIONS.get(int(item_id))
+        if location is not None:
+            # Parts live in BaseInfo.TopPartList/MidPartList/BotPartList (fields
+            # 15/16/17) as ContainerIntToytopPartProto{idx=part id,
+            # val=ToytopPartProto{Level, Piece, PartAs}}. DefaultItems is never
+            # read for a part, so a part sent there stays "not acquired".
+            level = max(1, min(15, int(part_levels.get(item_id, part_initial_level(item_id)))))
+            piece = max(0, int(part_fragments.get(item_id, 0)))
+            part = b"".join((
+                protobuf_int(1, level),      # ToytopPartProto.Level
+                protobuf_int(2, piece),      # ToytopPartProto.Piece
+                protobuf_int(3, location + 1),  # PartAs (0 Top, 1 Mid, 2 Bot)
+            ))
+            base_info += protobuf_bytes(
+                15 + location, protobuf_int(1, int(item_id)) + protobuf_bytes(2, part),
+            )
+            continue
         field_number = scalar_fields.get(int(item_id))
         if field_number is not None:
             base_info += protobuf_int(field_number, int(quantity))
         elif quantity > 0:
-            base_info += protobuf_bytes(22, protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity)))
+            entry = item_registry.classify(item_id)
+            if entry and int(entry.get("type", -1)) == 25:
+                # Type-25 items are read from BaseInfo.Currency (field 55).
+                base_info += protobuf_bytes(
+                    55, protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity)),
+                )
+            else:
+                base_info += protobuf_bytes(22, protobuf_int(1, int(item_id)) + protobuf_int(2, int(quantity)))
     player_data = protobuf_bytes(1, bytes(base_info))  # PlayerData.BaseInfo
     body = struct.pack(">IH", 6 + len(player_data), 1)  # ESC_PlayerData sync
     return websocket_binary_frame(body + player_data)
@@ -5154,7 +6367,7 @@ class Handler(socketserver.BaseRequestHandler):
                                 adventure_progression_backfilled = backfill_active_adventure_progression(
                                     self.app.progression_counters, True,
                                 )
-                    if expired_map or adventure_progression_backfilled:
+                    if expired_map or adventure_progression_backfilled or resume_map is not None:
                         save_profile_state(self.app)
                     if adventure_progression_backfilled:
                         self.record("synthetic_level_progression_backfill",
@@ -5171,6 +6384,7 @@ class Handler(socketserver.BaseRequestHandler):
                                   if getattr(self.app, "account", None) else "Local Test"),
                         roguelike_key_num=self.app.roguelike_keys,
                         roguelike_search_points=self.app.roguelike_search_points,
+                        roguelike_daily_has_buy_times=roguelike_daily_key_buy_times(self.app),
                         daily_task_claimed=daily_task_claimed,
                         achievement_claimed=achievement_claimed,
                         inventory_items=inventory_items,
@@ -5193,6 +6407,7 @@ class Handler(socketserver.BaseRequestHandler):
                         save_boxes=save_box.normalize_save_boxes(getattr(self.app, "save_boxes", None)),
                         cosmetics=cosmetic.normalize_cosmetics(getattr(self.app, "cosmetics", None)),
                         part_skins=normalize_part_skins(getattr(self.app, "part_skins", None)),
+                        task_exchange_claims=self.app.task_exchange_claims,
                     ))
                     self.record("synthetic_player_data_sync", message_id=1,
                                 player_data_fields=["BaseInfo", "Daily", "RaceHistory", "DBTaskLists", "ChapterBattleResult", "ChapterReward", "GuideStep", "Achievement", "RogueLikeItem", "LotteryInfo"],
@@ -5240,7 +6455,11 @@ class Handler(socketserver.BaseRequestHandler):
                                 public_svr_fields=["Url", "Id", "Token", "WsUrl"],
                                 credentials_synthetic=True)
                     if resume_map is not None:
-                        self.request.sendall(make_roguelike_info_sync(resume_map))
+                        self.request.sendall(make_roguelike_info_sync(
+                            resume_map,
+                            getattr(self.app, "roguelike_level_process", None),
+                            roguelike_chapter_record_sync_rows(self.app),
+                        ))
                         self.record("synthetic_roguelike_resume_sync", message_id=5,
                                     chapter_id=int(resume_map.get("chapter_id", 0)),
                                     chapter_level=int(resume_map.get("chapter_level", 1)),
@@ -5248,6 +6467,18 @@ class Handler(socketserver.BaseRequestHandler):
                                     node_count=len(resume_map.get("nodes", {})),
                                     remaining_hp=resume_map.get("hp", []),
                                     purpose="restore the active Adventure map on this local profile's next login")
+                    else:
+                        # No active run, but LevelProcess still has to reach the
+                        # client: it is the only source of chapter unlock state.
+                        record_sync = make_roguelike_record_sync(
+                            getattr(self.app, "roguelike_level_process", None),
+                            roguelike_chapter_record_sync_rows(self.app),
+                        )
+                        if record_sync:
+                            self.request.sendall(record_sync)
+                            self.record("synthetic_roguelike_record_sync", message_id=5,
+                                        level_process=dict(self.app.roguelike_level_process),
+                                        purpose="keep Adventure chapter unlock state without an active map")
                     time.sleep(0.05)
                     response = make_login_success(self.app.player_id)
                     self.request.sendall(response)
@@ -5369,6 +6600,9 @@ class Handler(socketserver.BaseRequestHandler):
                         with self.app.roguelike_lock:
                             candidate_items = dict(self.app.inventory_items)
                             candidate_part_fragments = dict(self.app.part_fragments)
+                            candidate_part_levels = dict(getattr(self.app, "part_levels", {}) or {})
+                            owned_item_ids = {int(part_id) for part_id, level in
+                                              candidate_part_levels.items() if int(level) >= 1}
                             candidate_info = normalize_lottery_info(self.app.lottery_info)
                             cost_before = max(0, int(candidate_items.get(cost_item_id, 0)))
                             current_lottery = candidate_info["lotteries"].get(str(lottery_id), {})
@@ -5383,6 +6617,7 @@ class Handler(socketserver.BaseRequestHandler):
                                 for _ in range(times):
                                     resolved = resolve_lottery_reward(
                                         lottery_id, candidate_items, candidate_info,
+                                        owned_item_ids,
                                     )
                                     if resolved is None:
                                         response_code = 4
@@ -5396,7 +6631,13 @@ class Handler(socketserver.BaseRequestHandler):
                                     credit_item_reward(
                                         candidate_items, candidate_part_fragments,
                                         item_id, quantity,
+                                        candidate_part_levels,
                                     )
+                                    if int(candidate_part_levels.get(item_id, 0)) >= 1:
+                                        # A part granted by this draw is now owned;
+                                        # later draws in the same batch must use its
+                                        # OwnedPvalue weight.
+                                        owned_item_ids.add(item_id)
                                     draws.append(resolved)
 
                                     current_lottery = candidate_info["lotteries"][str(lottery_id)]
@@ -5419,6 +6660,7 @@ class Handler(socketserver.BaseRequestHandler):
                                         cost_record["5000"] = int(cost_record.get("5000", 0)) + times
                                     self.app.inventory_items = candidate_items
                                     self.app.part_fragments = candidate_part_fragments
+                                    self.app.part_levels = candidate_part_levels
                                     self.app.lottery_info = candidate_info
                                     increment_level_task_counters(self.app.progression_counters, LOTTERY_TIMES_CONDITION, times)
                                     increment_level_task_counters(self.app.progression_counters, LOTTERY_TICKET_COST_CONDITION, cost_required)
@@ -5441,6 +6683,7 @@ class Handler(socketserver.BaseRequestHandler):
                             nickname=nickname,
                             roguelike_key_num=self.app.roguelike_keys,
                             roguelike_search_points=self.app.roguelike_search_points,
+                            roguelike_daily_has_buy_times=roguelike_daily_key_buy_times(self.app),
                             daily_task_claimed=bool(self.app.daily_task_claimed),
                             achievement_claimed=bool(self.app.achievement_claimed),
                             inventory_items=inventory_snapshot,
@@ -5855,6 +7098,11 @@ class Handler(socketserver.BaseRequestHandler):
                                 seed=seed,
                                 start_location=start_location,
                                 hp=hp_values,
+                                toy_tops=battle_toy_tops(
+                                    self.app.lineups, self.app.part_levels,
+                                    self.app.inventory_items,
+                                    getattr(self.app, "part_skins", None),
+                                ),
                             )
                             # A successful Adventure entry is the catalog event
                             # RLEnterMap (condition 30), used by later GP tasks.
@@ -5865,6 +7113,7 @@ class Handler(socketserver.BaseRequestHandler):
                     if result_code == 10 and new_key_num != available:
                         self.request.sendall(make_roguelike_key_sync(
                             new_key_num, self.app.roguelike_search_points,
+                            roguelike_daily_key_buy_times(self.app),
                         ))
                     if result_code == 10:
                         # The client merges repeated Nodes by key. Its local
@@ -5873,7 +7122,11 @@ class Handler(socketserver.BaseRequestHandler):
                         self.request.sendall(make_roguelike_reply(
                             4, chapter_id=chapter_id,
                         ))  # ERogueLikeCode.RogueLikeNodesReset
-                        self.request.sendall(make_roguelike_info_sync(self.app.roguelike_map_state))
+                        self.request.sendall(make_roguelike_info_sync(
+                            self.app.roguelike_map_state,
+                            getattr(self.app, "roguelike_level_process", None),
+                            roguelike_chapter_record_sync_rows(self.app),
+                        ))
                     self.request.sendall(make_roguelike_reply(
                         result_code, chapter_id=chapter_id,
                     ))
@@ -5938,7 +7191,11 @@ class Handler(socketserver.BaseRequestHandler):
                         else:
                             sync_state = None
                     if sync_state is not None:
-                        self.request.sendall(make_roguelike_info_sync(sync_state))
+                        self.request.sendall(make_roguelike_info_sync(
+                            sync_state,
+                            getattr(self.app, "roguelike_level_process", None),
+                            roguelike_chapter_record_sync_rows(self.app),
+                        ))
                     self.request.sendall(make_roguelike_reply(
                         20, location=location, chapter_id=chapter_id,
                     ))  # ERogueLikeCode.EnterNodeSuccess
@@ -5960,6 +7217,7 @@ class Handler(socketserver.BaseRequestHandler):
                     trigger_location = int(trigger_request["trigger_location"])
                     buff_item_ids = list(trigger_request["buff_item_ids"])
                     hp_values = list(trigger_request["hp_values"])
+                    trigger_all_node = int(trigger_request["trigger_all_node"])
                     with self.app.roguelike_lock:
                         refresh_shared_profile_state(self.app)
                         result = apply_roguelike_trigger(
@@ -5971,6 +7229,7 @@ class Handler(socketserver.BaseRequestHandler):
                             hp_values=hp_values,
                             trigger_location=trigger_location,
                             buff_item_ids=buff_item_ids,
+                            trigger_all_node=trigger_all_node,
                         )
                         delivery_items = result["delivery_items"]
                         part_fragment_rewards = result["part_fragment_rewards"]
@@ -5990,12 +7249,41 @@ class Handler(socketserver.BaseRequestHandler):
                             )
                             if progression_advances:
                                 save_profile_state(self.app)
+                        if result.get("chapter_completed"):
+                            map_context = sync_state or {}
+                            record_roguelike_chapter_clear(
+                                self.app, chapter_id=chapter_id,
+                                chapter_level=int(map_context.get("chapter_level", 1)),
+                            )
                     response_frames = make_roguelike_trigger_response_frames(
                         self.app, chapter_id=chapter_id, location=location,
                         result=result, progression_sync=bool(progression_advances),
                     )
                     for response_frame in response_frames:
                         self.request.sendall(response_frame)
+                    if result.get("chapter_completed"):
+                        # GiveUpMapSuccess (60) is the only result code the live
+                        # client turns into a map -> chapter-list transition:
+                        # RogueLikeMainUI.onLoad handles RogueLike_GiveUpMapSuccess
+                        # with showSystem() + dataMgr.resetData(). A won run never
+                        # sends a give-up request itself, so the server closes the
+                        # finished run instead of leaving the player on the map.
+                        #
+                        # 60 only switches the view that is alive right now. The
+                        # battle report rebuilds RogueLikeMainUI afterwards, and
+                        # start() re-enters the map while isInChapter() is true, so
+                        # the client map has to be dropped as well.
+                        finished_state = sync_state or {}
+                        reset_version = max(
+                            game_time_seconds(),
+                            int(finished_state.get("version", 0)) + 1,
+                        )
+                        for reset_frame in make_roguelike_map_reset_frames(
+                                reset_version):
+                            self.request.sendall(reset_frame)
+                        self.request.sendall(make_roguelike_reply(
+                            60, chapter_id=chapter_id,
+                        ))
                     # The last frame is ESC_RogueLikeRet (180), carrying the
                     # native Adventure reward receipt and completion code.
                     self.record("synthetic_roguelike_trigger", request_id=184,
@@ -6005,6 +7293,9 @@ class Handler(socketserver.BaseRequestHandler):
                                 node_status=result.get("node_status"),
                                 export_bit=result.get("export_bit"),
                                 shop_purchase=result.get("shop_purchase"),
+                                trigger_all_node=trigger_all_node,
+                                chapter_completed=bool(result.get("chapter_completed")),
+                                chapter_advance=result.get("chapter_advance"),
                                 result_code=result["response_code"],
                                 event_type=event_type,
                                 progression_condition=progression_condition,
@@ -6053,13 +7344,31 @@ class Handler(socketserver.BaseRequestHandler):
                     values = protobuf_varint_values(request)
                     chapter_id = int32_value(values.get(3, 0))
                     opr_type = int32_value(misc.get(1, 0))
-                    response_code = {2: 60, 3: 61}.get(opr_type)
+                    # Unknown opr types still get a ret: the client shows a
+                    # loading panel for the whole buy/give-up flow and waits for
+                    # ESC_RogueLikeRet before it clears it.
+                    response_code = {2: 60, 3: 61}.get(opr_type, 0)
                     free_key_result = None
+                    key_purchase_result = None
                     if opr_type == 2:
                         with self.app.roguelike_lock:
                             refresh_shared_profile_state(self.app)
                             self.app.roguelike_map_state = None
                             save_profile_state(self.app)
+                    elif opr_type == 1:
+                        # RL_MiscOpr_ExchangeKey. The buy-key panel has already
+                        # collected the diamonds client-side via payDiamond, so
+                        # this is the only place the balance actually moves.
+                        with self.app.roguelike_lock:
+                            refresh_shared_profile_state(self.app)
+                            key_purchase_result = apply_roguelike_key_purchase(self.app)
+                            response_code = int(key_purchase_result["response_code"])
+                            if key_purchase_result["granted"]:
+                                save_profile_state(self.app)
+                        if key_purchase_result["granted"]:
+                            # Refresh BaseInfo.Diamond, KeyNum and
+                            # DailyHasBuyTimes before code 50 closes the panel.
+                            self.request.sendall(make_app_player_data_sync(self.app))
                     elif opr_type == 13:
                         # In the original UI this request is sent only after an
                         # ad callback. This revival build has no ads, so preserve
@@ -6074,16 +7383,21 @@ class Handler(socketserver.BaseRequestHandler):
                             # Refresh key count and the Daily claim bit before
                             # code 50 makes the client close and refresh the UI.
                             self.request.sendall(make_app_player_data_sync(self.app))
-                    if response_code is not None:
-                        self.request.sendall(make_roguelike_reply(
-                            response_code, chapter_id=chapter_id,
-                        ))
+                    self.request.sendall(make_roguelike_reply(
+                        response_code, chapter_id=chapter_id or None,
+                    ))
                     self.record("synthetic_roguelike_misc_response", request_id=183,
                                 opr_type=opr_type, param=misc.get(2, 0),
                                 chapter_id=chapter_id, response_code=response_code,
                                 free_key_claim=free_key_result,
-                                player_data_sync_id=(1 if free_key_result and free_key_result["granted"] else None),
-                                purpose=("grant the local once-daily Adventure key without an ad"
+                                key_purchase=key_purchase_result,
+                                player_data_sync_id=(1 if (
+                                    (free_key_result and free_key_result["granted"])
+                                    or (key_purchase_result and key_purchase_result["granted"])
+                                ) else None),
+                                purpose=("buy one Adventure key for diamonds"
+                                         if opr_type == 1 else
+                                         "grant the local once-daily Adventure key without an ad"
                                          if opr_type == 13 else
                                          "acknowledge local Adventure give-up and post-battle selection"))
                 elif message_id == 144:
@@ -6187,111 +7501,60 @@ class Handler(socketserver.BaseRequestHandler):
                     request_values = protobuf_varint_values(request)
                     exchange_id = int32_value(request_values.get(1, 0))
                     sub_ids = protobuf_repeated_int32_values(request, 2)
-                    rewards = TUTORIAL_TASK_EXCHANGE_REWARDS.get(exchange_id, ())
-                    level_up = LEVEL_UP_EXCHANGES.get(str(exchange_id))
-                    if not rewards and level_up:
-                        rewards = tuple((int(item), int(num)) for item, num in level_up["rewards"])
-                    box_contents = TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS.get(exchange_id, ())
-                    grant_items = list(rewards)
-                    for _, contents in box_contents:
-                        grant_items.extend(contents)
-                    progression_sync = False
-                    level_before = None
-                    power_before = None
                     with self.app.roguelike_lock:
                         refresh_shared_profile_state(self.app)
-                        claims = set(int(value) for value in self.app.task_exchange_claims)
-                        already_claimed = exchange_id in claims
-                        level_row = LEVEL_PROGRESSION_ROWS.get(int(self.app.level) + 1, {})
-                        required_task_ids = [int(value) for value in level_row.get("LevelTasks", []) or []]
-                        requirements_met = bool(required_task_ids) and all(
-                            (lambda task: task is not None and level_task_progress(
-                                task, self.app.inventory_items, self.app.level_task_state,
-                                self.app.progression_counters, self.app.part_levels,
-                            )[0] >= max(0, int(task.get("maxProcess", 0))))(
-                                LEVEL_PROGRESSION_TASKS.get(task_id)
-                            )
-                            for task_id in required_task_ids
-                        )
-                        claims_current_level = (
-                            exchange_id == LEVEL_FIRST_REWARD_ID
-                            or (level_up is not None and int(level_up["level"]) == int(self.app.level))
-                        )
-                        success = (
-                            claims_current_level
-                            and bool(rewards) and not sub_ids and not already_claimed
-                            and requirements_met
-                        )
-                        if success:
-                            level_before = int(self.app.level)
-                            power_before = int(self.app.power)
-                            for item_id, quantity in grant_items:
-                                credit_profile_item_reward(self.app, item_id, quantity)
-                            claims.add(exchange_id)
-                            self.app.task_exchange_claims = sorted(claims)
-                            next_level = int(self.app.level) + 1
-                            next_level_row = LEVEL_PROGRESSION_ROWS.get(next_level, {})
-                            reward_gp = max(0, int(next_level_row.get("rewardGPA", 0)))
-                            self.app.level = next_level
-                            self.app.power = max(
-                                int(self.app.power) + reward_gp,
-                                int(next_level_row.get("levelGPA", 0)),
-                            )
-                            for task_id in required_task_ids:
-                                task = LEVEL_PROGRESSION_TASKS.get(task_id)
-                                if task is not None:
-                                    maximum = max(0, int(task.get("maxProcess", 0)))
-                                    self.app.level_task_state[str(task_id)] = {
-                                        "process": maximum,
-                                        "status": TASK_STATUS_REWARDED,
-                                    }
-                            save_profile_state(self.app)
-                            progression_sync = True
-                        reward_counts = {
-                            str(item_id): int(
-                                self.app.part_fragments.get(item_id, 0)
-                                if item_id in PART_ITEM_LOCATIONS else
-                                self.app.inventory_items.get(item_id, 0)
-                            )
-                            for item_id, _ in grant_items
-                        }
-                        normal_reward_counts = {
-                            int(item_id): int(self.app.inventory_items.get(item_id, 0))
-                            for item_id, _ in grant_items
-                            if int(item_id) not in PART_ITEM_LOCATIONS
-                        }
-                    result = 3 if success else (1 if already_claimed else 0)
+                        claim = apply_task_exchange_claim(self.app, exchange_id, sub_ids)
+                        claimed_exchanges = list(self.app.task_exchange_claims)
+                        part_levels = dict(self.app.part_levels)
+                        part_fragments = dict(self.app.part_fragments)
+                    success = bool(claim["success"])
                     if success:
                         self.request.sendall(make_app_player_data_sync(self.app))
+                        normal_reward_counts = {
+                            int(item_id): int(claim["reward_counts"].get(str(item_id), 0))
+                            for item_id, _ in claim["grant_items"]
+                            if int(item_id) not in PART_ITEM_LOCATIONS
+                        }
                         if normal_reward_counts:
-                            self.request.sendall(make_inventory_items_sync(tuple(
-                                normal_reward_counts.items()
-                            )))
-                    self.request.sendall(make_task_exchange_opr_response(result, exchange_id))
+                            self.request.sendall(make_inventory_items_sync(
+                                tuple(normal_reward_counts.items()),
+                                part_levels=part_levels,
+                                part_fragments=part_fragments,
+                            ))
+                    self.request.sendall(make_task_exchange_opr_response(
+                        int(claim["result"]), exchange_id,
+                    ))
                     if success:
                         # The claimed box is represented by BoxList below. Keep
                         # Items empty so the native reward popup does not count
                         # the box a second time before opening its BoxUI.
                         self.request.sendall(make_task_exchange_get_items(
-                            exchange_id, (), box_contents,
+                            exchange_id, tuple(claim["popup_items"]), claim["box_contents"],
                         ))
                     self.record("synthetic_task_exchange_response", request_id=146,
                                 response_id=147, reward_message_id=143 if success else None,
                                 exchange_id=exchange_id, sub_ids=sub_ids,
-                                result=result, success=success,
-                                already_claimed=already_claimed,
+                                exchange_idx=int(claim["exchange_idx"]),
+                                group_idx=int(claim["group_idx"]),
+                                result=int(claim["result"]), success=success,
+                                already_claimed=bool(claim["already_claimed"]),
+                                condition_met=bool(claim["condition_met"]),
                                 reward_items=[{"item_id": item_id, "num": quantity}
-                                              for item_id, quantity in grant_items] if success else [],
+                                              for item_id, quantity in claim["grant_items"]]
+                                if success else [],
                                 box_contents=[{"box_id": box_id,
                                                "items":[{"item_id": item_id, "num": quantity}
                                                         for item_id, quantity in contents]}
-                                              for box_id, contents in box_contents] if success else [],
-                                inventory_counts=reward_counts,
-                                claimed_exchanges=self.app.task_exchange_claims,
-                                level_before=level_before, level_after=int(self.app.level),
-                                power_before=power_before, power_after=int(self.app.power),
-                                requirements_met=requirements_met,
-                                purpose="claim the verified next-level exchange and persist its chest and GP")
+                                              for box_id, contents in claim["box_contents"]]
+                                if success else [],
+                                inventory_counts=claim["reward_counts"],
+                                claimed_exchanges=claimed_exchanges,
+                                level_before=claim["level_before"],
+                                level_after=int(self.app.level),
+                                power_before=claim["power_before"],
+                                power_after=int(self.app.power),
+                                requirements_met=bool(claim["requirements_met"]),
+                                purpose="claim a TaskExchange row (level reward, Honor Room, task-score chest)")
                 elif message_id == 176:
                     request = protobuf_varint_values(frame[6:])
                     achievement_id = request.get(1, 0)
@@ -6402,6 +7665,10 @@ def main() -> None:
     args.roguelike_keys = int(profile_state["roguelike_keys"])
     args.roguelike_key_ad_claim_day = int(profile_state["roguelike_key_ad_claim_day"])
     args.roguelike_map_state = profile_state["roguelike_map_state"]
+    args.roguelike_level_process = dict(profile_state["roguelike_level_process"])
+    args.roguelike_chapter_records = profile_state["roguelike_chapter_records"]
+    args.roguelike_daily_has_buy_times = int(profile_state["roguelike_daily_has_buy_times"])
+    args.roguelike_key_buy_day = int(profile_state["roguelike_key_buy_day"])
     args.local_purchases = profile_state["local_purchases"]
     args.lineups = profile_state["lineups"]
     args.persisted_lineups = normalize_lineups(profile_state["lineups"])

@@ -30,6 +30,7 @@ import admin_mail
 import season_config
 import item_registry
 import item_catalog
+import part_storage
 from mail_fixture import DEFAULT_STATE_FILE, MAIL_STATE_READ, MAIL_STATE_RECEIVED, update_mail_state, visible_mails
 
 ROOT = Path(__file__).resolve().parent
@@ -135,9 +136,21 @@ def claim_local_free_purchase(app: argparse.Namespace, product_id: int, nonce: s
         inventory = {str(int(key)): max(0, int(value))
                      for key, value in profile.get("inventory_items", {}).items()
                      if str(key).lstrip("-").isdigit() and int(value) > 0}
+        part_locations = part_storage.load_locations()
+        part_levels = part_storage.normalize_counts(profile.get("part_levels"))
+        part_fragments = part_storage.normalize_counts(profile.get("part_fragments"))
         for item_id, quantity in delivery.items():
+            if part_storage.credit(part_levels, part_fragments, item_id, quantity,
+                                   locations=part_locations):
+                # A part product owns the part (Level >= 1); storing its id in
+                # inventory_items is never read by the client for parts.
+                continue
             inventory[str(item_id)] = inventory.get(str(item_id), 0) + quantity
         profile["inventory_items"] = inventory
+        if part_levels or "part_levels" in profile:
+            profile["part_levels"] = part_storage.stringify_counts(part_levels)
+        if part_fragments or "part_fragments" in profile:
+            profile["part_fragments"] = part_storage.stringify_counts(part_fragments)
         _count_purchase_for_tasks(profile, delivery)
 
         if limit_key:
