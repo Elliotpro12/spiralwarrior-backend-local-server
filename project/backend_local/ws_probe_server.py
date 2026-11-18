@@ -2992,6 +2992,11 @@ def websocket_binary_frame(payload: bytes) -> bytes:
 
 
 LOCAL_MAX_SUB_CHANNEL = 1
+# PlayerInfoProto.ObtainItemLimitedNum=7 (ContainerIntIntProto idx=item id, val=limit). The client
+# reports the competition gold cap as reached when this value is missing (0 >= 0) and shows the
+# 'daily limit reached' reminder before every championship challenge. The real cap is unknown;
+# this synthetic value is only large enough to keep that reminder from appearing.
+LOCAL_GOLD_OBTAIN_LIMIT = 1000000
 
 
 def ensure_shop_picks(app, unix_now: int | None = None) -> bool:
@@ -3050,8 +3055,9 @@ def make_public_svr_sync(server_time: int | None = None,
     # reads it for the Daily Missions countdown (SyncDataManager.getNextUpdateTime).
     next_daily_reset = task_period.next_reset_game_seconds(3, server_time)
     daily_shop = shop_static.build_daily_shop(next_daily_reset, list(shop_static.cached_items()), daily_picks)
+    gold_limit = protobuf_bytes(7, protobuf_int(1, GOLD_ITEM_ID) + protobuf_int(2, LOCAL_GOLD_OBTAIN_LIMIT))
     player_info = (protobuf_bytes(1, sys_info) + protobuf_bytes(2, daily_shop)
-                   + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
+                   + gold_limit + protobuf_bytes(12, public_svr) + protobuf_int(9, LOCAL_MAX_SUB_CHANNEL))
     body = struct.pack(">IH", 6 + len(player_info), 2) + player_info
     return websocket_binary_frame(body)
 
