@@ -410,7 +410,9 @@ TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS = {}  # LV01 no longer hands out a box; rewa
 # Victoria guiada (E_RACE_GUIDE_WIN, raceType 1): el cliente pasa a OpenBox y muestra
 # RaceReward. El oro se muestra y se acredita aquí; la caja 1228156978 se abre después.
 TUTORIAL_WIN_GOLD = 35
-TUTORIAL_WIN_PARTS = ((2001, 2),)  # Pieces shown on the victory screen, credited once.
+# 3 copies: the first one makes Behemoth owned (Level 1) and the other two are the 2 pieces
+# the tutorial upgrade (ItemUpgrade, Level1 piece 2) needs. With 2 copies the upgrade stops at 1/2.
+TUTORIAL_WIN_PARTS = ((2001, 3),)  # Copies shown on the victory screen, credited once.
 LINEUP_PART_FIELDS = {"top": 1, "mid": 2, "bot": 3}
 PURCHASE_PART_LOCATIONS = {
     # Confirmed through the live recharge catalog and PartDataCache.getPartSelf
