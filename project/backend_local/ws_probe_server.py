@@ -395,9 +395,10 @@ SYNTHETIC_STARTER_PARTS = (
 )  # (part ID, Top/Mid/Bot enum).
 SYNTHETIC_GUIDE_REWARD_PARTS = ((2011, 2),)  # Part 2011 is LocationMiddle (config enum 1), so PartAs=2.
 TUTORIAL_TASK_EXCHANGE_REWARDS = {
-    # GuideData 1412445232 calls DoLevelUp("LV01"). The original client table
-    # maps LV01 (int32 0x4c563031) to one Basic Accessory Box.
-    1280716849: ((1228156978, 1),),
+    # GuideData 1412445232 calls DoLevelUp("LV01"). The LV01 claim grants nothing: the box
+    # 1228156978 would pay gold 35 and part 2001 again on top of the victory screen
+    # (TUTORIAL_WIN_GOLD / TUTORIAL_WIN_PARTS), so the rewards are paid there only.
+    1280716849: (),
 }
 # ChanceManager row 891 confirms that the LV01 Basic Accessory Box can award
 # part 2001; NumRank1=2 is the level-1 quantity. BoxList drives the original
@@ -405,9 +406,7 @@ TUTORIAL_TASK_EXCHANGE_REWARDS = {
 # Chance rows 891 (part 2001, NumRank1=2) and 901 (gold 1227894833, NumRank1=35) belong to the
 # LV01 box 1228156978. The tutorial upgrade (ItemUpgrade 5001, level 1) costs 20 gold, so the
 # box must also grant gold. The deterministic subset below uses rank-1 quantities.
-TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS = {
-    1280716849: ((1228156978, ()),),  # Box is no longer required; rewards come on the victory screen.
-}
+TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS = {}  # LV01 no longer hands out a box; rewards come on the victory screen.
 # Victoria guiada (E_RACE_GUIDE_WIN, raceType 1): el cliente pasa a OpenBox y muestra
 # RaceReward. El oro se muestra y se acredita aquí; la caja 1228156978 se abre después.
 TUTORIAL_WIN_GOLD = 35
@@ -4231,8 +4230,9 @@ def apply_task_exchange_claim(app, exchange_id: int,
         # granting an option the client did not select.
         return claim
 
-    rewards = TUTORIAL_TASK_EXCHANGE_REWARDS.get(exchange_id)
-    if not rewards:
+    if exchange_id in TUTORIAL_TASK_EXCHANGE_REWARDS:
+        rewards = TUTORIAL_TASK_EXCHANGE_REWARDS[exchange_id]
+    else:
         rewards = tuple((int(item), int(num)) for item, num in (row.get("rewards") or ()))
     box_contents = TUTORIAL_TASK_EXCHANGE_BOX_CONTENTS.get(exchange_id, ())
     box_ids = {int(box_id) for box_id, _ in box_contents}
